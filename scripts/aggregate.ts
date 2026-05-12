@@ -695,6 +695,34 @@ function collectObsidianVaultCandidates(): { root: string; fromOverride?: boolea
   add(join(HOME, "Documents", "Obsidian"));
   add(join(HOME, "Desktop", "Obsidian"));
 
+  // Obsidian's own vault registry on macOS — every vault the user has opened in
+  // the Obsidian app lives here, regardless of disk location. Treat each entry as
+  // an override (fromOverride: true) because the registry itself is the trust
+  // signal — vaults Obsidian remembers are real vaults even if the .obsidian
+  // folder has been cleaned up or pruned.
+  if (IS_MACOS) {
+    const registryPath = join(
+      HOME,
+      "Library",
+      "Application Support",
+      "obsidian",
+      "obsidian.json",
+    );
+    if (existsSync(registryPath)) {
+      try {
+        const raw = readFileSync(registryPath, "utf-8");
+        const registry = JSON.parse(raw) as {
+          vaults?: Record<string, { path?: string }>;
+        };
+        for (const entry of Object.values(registry.vaults ?? {})) {
+          if (entry?.path) add(entry.path, true);
+        }
+      } catch {
+        // registry malformed — skip silently
+      }
+    }
+  }
+
   const scanOneLevel = (parent: string, scanChildren = false) => {
     if (!existsSync(parent)) return;
     try {
