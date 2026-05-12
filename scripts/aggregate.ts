@@ -2387,6 +2387,19 @@ async function main() {
   const chatgpt = detectChatgptAuth();
   const openrouter = await fetchOpenRouterBalance();
   const openclaw = detectOpenclaw();
+  console.log("[aggregate] polling AgencyOS MCP ...");
+  const agencyos = await pollAgencyOS();
+  if (agencyos.available) {
+    const ret = agencyos.monthlyRetainerTotal ?? 0;
+    console.log(
+      `[aggregate] AgencyOS: ${agencyos.activeClientCount ?? 0} active client(s), ${ret.toLocaleString()} retainer/mo`,
+    );
+    if (agencyos.failures?.length) {
+      console.log(`[aggregate] AgencyOS partial: ${agencyos.failures.join(" · ")}`);
+    }
+  } else {
+    console.log(`[aggregate] AgencyOS: skipped (${agencyos.error})`);
+  }
   console.log("[aggregate] scanning memory folders ...");
   const memory = await parseMemory();
   console.log(
@@ -2649,6 +2662,7 @@ async function main() {
       })
       .sort((a, b) => b.startedMs - a.startedMs)
       .slice(0, 60),
+    agencyos,
     outputs: Array.from(parsed.runs.values())
       .flatMap((r) => {
         const sanitizedProj = sanitize(r.projKey) ?? r.projKey;
@@ -3099,6 +3113,105 @@ function humanDuration(ms: number): string {
   const h = Math.floor(ms / 3_600_000);
   const m = Math.round((ms % 3_600_000) / 60_000);
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+// ── AgencyOS MCP polling ─────────────────────────────────────────
+// The JARVIS launcher route reads this. We call the agency MCP server
+// (Bearer token already on disk at ~/.claude/mcp.json) for a few core
+// tools and emit a compact `agencyos: {...}` block in live-data.json.
+async function callMcpTool(
+  url: string,
+  token: string,
+  name: string,
+  args: Record<string, any> = {},
+  timeoutMs = 8000,
+): Promise<any> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: Math.floor(Math.random() * 1_000_000),
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j: any = await r.json();
+    if (j?.error) throw new Error(`${j.error.code}: ${j.error.message}`);
+    const text = j?.result?.content?.[0]?.text;
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function pollAgencyOS(): Promise<any> {
+  const fetchedAt = new Date().toISOString();
+  try {
+    const mcpPath = join(HOME, ".claude", "mcp.json");
+    if (!existsSync(mcpPath)) return { available: false, fetchedAt, error: "no ~/.claude/mcp.json" };
+    const cfg = JSON.parse(readFileSync(mcpPath, "utf-8"));
+    const s = cfg?.mcpServers?.agencyos;
+    if (!s) return { available: false, fetchedAt, error: "no mcpServers.agencyos entry" };
+    const url: string = s.url;
+    const auth: string = s.headers?.Authorization || s.headers?.authorization || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : auth;
+    if (!url || !token) return { available: false, fetchedAt, error: "missing url or token" };
+
+    const [state, statistics, pipeline, briefing, clientsResp] = await Promise.allSettled([
+      callMcpTool(url, token, "get_agency_state"),
+      callMcpTool(url, token, "get_statistics"),
+      callMcpTool(url, token, "get_sales_pipeline"),
+      callMcpTool(url, token, "get_daily_briefing"),
+      callMcpTool(url, token, "list_my_clients", { filter: "active" }),
+    ]);
+
+    const ok = (p: PromiseSettledResult<any>) => (p.status === "fulfilled" ? p.value : null);
+    const clientsRaw = ok(clientsResp);
+    const list: any[] = Array.isArray(clientsRaw?.clients) ? clientsRaw.clients : [];
+    const retainerTotal = list.reduce(
+      (sum: number, c: any) => sum + (Number(c?.retainerAmount) || 0),
+      0,
+    );
+
+    return {
+      available: true,
+      fetchedAt,
+      url,
+      state: ok(state),
+      statistics: ok(statistics),
+      pipeline: ok(pipeline),
+      briefing: ok(briefing),
+      clients: list.slice(0, 12).map((c: any) => ({
+        projectId: c.projectId,
+        name: c.name,
+        lifecycleStatus: c.lifecycleStatus,
+        retainerAmount: Number(c.retainerAmount) || 0,
+        createdAt: c.createdAt,
+      })),
+      activeClientCount: typeof clientsRaw?.total === "number" ? clientsRaw.total : list.length,
+      monthlyRetainerTotal: retainerTotal,
+      failures: [state, statistics, pipeline, briefing, clientsResp]
+        .map((p, i) =>
+          p.status === "rejected"
+            ? `${["get_agency_state", "get_statistics", "get_sales_pipeline", "get_daily_briefing", "list_my_clients"][i]}: ${(p.reason as Error)?.message ?? "?"}`
+            : null,
+        )
+        .filter(Boolean),
+    };
+  } catch (e) {
+    return { available: false, fetchedAt, error: (e as Error).message };
+  }
 }
 
 main().catch((e) => {
