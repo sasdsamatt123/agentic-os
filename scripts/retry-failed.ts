@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "node:fs";
-import { generate, type Aspect } from "/Users/operator/code/claude-os/scripts/gen-image";
+import { resolve } from "node:path";
+import { generate, type Aspect } from "./gen-image";
 
-const envPath = "/Users/operator/code/claude-os/.env.local";
+const repoRoot = resolve(import.meta.dir, "..");
+const envPath = resolve(repoRoot, ".env.local");
 if (existsSync(envPath)) {
   const env = readFileSync(envPath, "utf-8");
   for (const line of env.split("\n")) {
@@ -23,13 +25,13 @@ interface Job {
 
 const jobs: Job[] = [
   {
-    out: "/Users/operator/code/claude-os/src/assets/dream/skills-blue.png",
+    out: resolve(repoRoot, "src/assets/dream/skills-blue.png"),
     aspect: "16:9",
     format: "png",
     prompt: `${STYLE_ANCHOR} Subject: a long wall of matte-black hand tools and brass calipers hanging in dark shadow-boxes, each with a tiny amber serial-number LED underneath. One specific tool — a precision wrench — is illuminated by a soft electric-blue overhead spot, slightly forward of its slot as if just lifted. The rest of the wall recedes into dark falloff. Photographic realism. Metaphor: the right tool for the next job — your skill inventory.`,
   },
   {
-    out: "/Users/operator/code/claude-os/src/assets/dream/workflow-yellow.png",
+    out: resolve(repoRoot, "src/assets/dream/workflow-yellow.png"),
     aspect: "16:9",
     format: "png",
     prompt: `${STYLE_ANCHOR} Subject: extreme macro of brass clockwork half-buried in dark velvet — three exposed gears caught mid-rotation, the largest illuminated by warm amber side light, the smallest catching an electric-blue rim light from the opposite side. Polished but worn brass surfaces, fine dust visible between teeth. Background is pure black. Photographic realism. Metaphor: motion locked in pattern — repetition you can name.`,

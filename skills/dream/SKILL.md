@@ -15,25 +15,27 @@ A longer feature spec lives in the parent repo at `dream-spec.md` for context. *
 
 ## Operator context
 
-This operator is a hybrid content-creator + agency-operator + product-builder, not a pure coding workflow:
+Before scoring anything, learn who the operator is. Their workflow shape — pure coding, content-velocity, agency-ops, research, or some hybrid — determines which signal buckets matter most.
 
-- **Channels**: <youtube-channel> (AI educator YouTube), <channel> (Reels / Shorts).
-- **Products**: <product> (synthetic population for market research — TRIBE-backed), AgencyOS (multi-niche AI agency platform with 62 MCP tools at `<mcp-host>/mcp`).
-- **Workflow type**: content-velocity + agency-operations hybrid. Long sessions are deliberate (script writing, lead pipeline review, board-meeting persona rounds), not context rot.
-- **Daily tools the operator already owns** (do NOT recommend recreating these): `signal-dashboard` (morning brief), `dolu-dolu` (full-package script writing), `edmund-yong-style`, `raw-pov-broll`, `content-discovery-pipeline`, `recall` (Pinecone semantic memory), `strategy-awareness`, `wrap-up`. Read `~/.claude/skills/` and `~/.claude/plugins/*/skills/` for the live list before recommending any new skill.
-- **MCP**: AgencyOS server is connected in `~/.claude.json` → `mcpServers.agencyos`. Surface CRM / pipeline / scrape signals when they help.
-- **Languages**: Turkish primary, content English + Turkish mixed. Prescriptions stay in English (need to be shell-runnable) but operator-flavored headlines are fine.
+Read `~/.claude-os/config.json` for any of these optional fields (all are advisory; missing fields = use defaults):
+
+- `operator.profile` — short prose describing the operator's role and primary workflows.
+- `operator.products` / `operator.channels` — products they ship, channels they create for. Use these to recognise repeated work that should become a skill.
+- `operator.owns` — slugs of skills/tools the operator already has. **Never recommend recreating something already on this list.** Cross-check against `~/.claude/skills/` and `~/.claude/plugins/*/skills/` for the live inventory before suggesting any new skill.
+- `operator.mcpServers` — MCP servers the operator has connected (also visible in `~/.claude.json`). When their signals are relevant (CRM, pipeline, scraping, etc.), surface them.
+- `operator.language` — primary working language. Prescriptions stay in English so the `command` field is shell-runnable, but `headline` can match the operator's voice.
+- `operator.dimensionWeights` — per-bucket signal weight overrides, e.g. `{ "SESSION": 0.5 }` to down-weight session hygiene when long sessions are intentional.
+
+If `~/.claude-os/config.json` is missing entirely, treat the operator as a generic coding workflow and weight all eight buckets equally.
 
 ## Anti-patterns (hard NO in prescriptions)
 
-- **Do NOT suggest a skill the operator already owns** (see list above; if a slug matches in `~/.claude/skills/` or `~/.claude/plugins/*/skills/`, skip).
-- **Do NOT lecture about data authenticity.** Don't add "make sure these numbers are real" caveats — the operator handles real vs illustrative himself.
-- **Do NOT quote `$340 compute` or similar enterprise compute price tags in marketing copy.** This was a real prior mistake; it undermines enterprise positioning.
-- **Do NOT recommend "verify recency before posting" warnings** as prescriptions — already a known practice.
-- **Re-weight the eight dimensions for content-velocity:**
-  - **HIGHER signal weight**: Workflow patterns (tool-call sequences), Conversation mining (repeated content briefs / prompt structures), Cost intelligence (Opus on Haiku-grade work), Memory health (stale persona/strategy files).
-  - **LOWER signal weight**: Session hygiene (long sessions are intentional here), External opportunity (the operator runs `signal-dashboard` daily — don't suggest news he already chases).
-- **When you write `evidence[]`, cite real on-disk paths** the operator can verify: `~/.claude/projects/-Users-operator-Downloads-grow/...jsonl`, `~/.claude/skills/{slug}/SKILL.md`, `~/.claude-os/dreams/dream-YYYY-MM-DD.json`, `~/code/claude-os/src/data/live-data.json`, etc. No fabricated paths.
+- **Do NOT suggest a skill the operator already owns.** Check `operator.owns` in config, plus the live inventory in `~/.claude/skills/` and `~/.claude/plugins/*/skills/`. If a slug matches, skip.
+- **Do NOT lecture about data authenticity.** Don't add "make sure these numbers are real" caveats — the operator handles real vs illustrative themself.
+- **Do NOT quote dollar figures the operator hasn't given you.** Use `config.valuation.hourlyRateUsd` and real token counts; don't invent compute prices for marketing framing.
+- **Do NOT recommend generic hygiene reminders** ("verify recency before posting", "back up your files") as prescriptions — these are not actionable findings.
+- **Respect dimension weights** from `operator.dimensionWeights` when ranking. If the operator marks SESSION as low-weight, don't surface a session-hygiene finding as the top card.
+- **When you write `evidence[]`, cite real on-disk paths** the operator can verify: `~/.claude/projects/<workspace>/*.jsonl`, `~/.claude/skills/{slug}/SKILL.md`, `~/.claude-os/dreams/dream-YYYY-MM-DD.json`, `<repo>/src/data/live-data.json`, etc. No fabricated paths, and never hardcode another machine's username in your examples.
 - **Operator-flavored headlines, not corporate.** `"Opus is burning $X/d on Haiku-grade jobs"` > `"Consider optimizing your model selection strategy"`.
 
 ---
