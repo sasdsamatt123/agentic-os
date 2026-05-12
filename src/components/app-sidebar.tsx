@@ -2,8 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { Home, Sparkles, Brain, Activity, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import hermesLogo from "@/assets/hermes-agent.png";
-import openclawLogo from "@/assets/openclaw.png";
+import jarvisLogo from "@/assets/jarvis.svg?url";
 
 const AVATAR_STORAGE_KEY = "claude-os.avatar.v1";
 const OPERATOR_NAME_KEY = "claude-os.operator-name.v1";
@@ -90,8 +89,7 @@ const primary = [
 ];
 
 const agents = [
-  { to: "/agents/hermes", label: "Hermes Agent", logo: hermesLogo, tone: "#FFD21E" },
-  { to: "/agents/openclaw", label: "OpenClaw", logo: openclawLogo, tone: "#EF4444" },
+  { to: "/agents/jarvis", label: "JARVIS", logo: jarvisLogo, tone: "#4A9EFF" },
 ];
 
 export function AppSidebar() {
@@ -100,7 +98,7 @@ export function AppSidebar() {
 
   return (
     <aside className="hidden md:flex w-56 shrink-0 flex-col border-r border-border bg-sidebar">
-      {/* Brand mark — "m." monogram in amber on charcoal. */}
+      {/* Brand mark — "A." monogram in amber on charcoal. */}
       <div className="flex h-14 items-center gap-2.5 px-5">
         <div
           className="relative flex h-8 w-8 items-center justify-center rounded-md overflow-hidden shrink-0 font-mono font-semibold text-[15px] leading-none"
@@ -113,7 +111,7 @@ export function AppSidebar() {
               "inset 0 1px 0 oklch(1 0 0 / 5%), 0 1px 3px 0 oklch(0 0 0 / 30%)",
           }}
         >
-          m.
+          A.
         </div>
         <div className="flex flex-col leading-tight min-w-0">
           <span className="text-[12.5px] font-semibold tracking-tight">Agentic OS</span>

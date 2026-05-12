@@ -143,7 +143,7 @@ function SharePage() {
                 boxShadow: "inset 0 1px 0 oklch(1 0 0 / 6%)",
               }}
             >
-              m.
+              A.
             </div>
             <div className="flex flex-col leading-tight">
               <div className="text-[14px] font-semibold tracking-tight text-white">Agentic OS</div>

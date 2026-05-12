@@ -18,8 +18,7 @@ import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesIndexRouteImport } from './routes/workspaces.index'
 import { Route as WorkspacesIdRouteImport } from './routes/workspaces.$id'
-import { Route as AgentsOpenclawRouteImport } from './routes/agents.openclaw'
-import { Route as AgentsHermesRouteImport } from './routes/agents.hermes'
+import { Route as AgentsJarvisRouteImport } from './routes/agents.jarvis'
 
 const SkillsRoute = SkillsRouteImport.update({
   id: '/skills',
@@ -66,14 +65,9 @@ const WorkspacesIdRoute = WorkspacesIdRouteImport.update({
   path: '/workspaces/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AgentsOpenclawRoute = AgentsOpenclawRouteImport.update({
-  id: '/agents/openclaw',
-  path: '/agents/openclaw',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsHermesRoute = AgentsHermesRouteImport.update({
-  id: '/agents/hermes',
-  path: '/agents/hermes',
+const AgentsJarvisRoute = AgentsJarvisRouteImport.update({
+  id: '/agents/jarvis',
+  path: '/agents/jarvis',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -85,8 +79,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute
   '/share': typeof ShareRoute
   '/skills': typeof SkillsRoute
-  '/agents/hermes': typeof AgentsHermesRoute
-  '/agents/openclaw': typeof AgentsOpenclawRoute
+  '/agents/jarvis': typeof AgentsJarvisRoute
   '/workspaces/$id': typeof WorkspacesIdRoute
   '/workspaces/': typeof WorkspacesIndexRoute
 }
@@ -98,8 +91,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/share': typeof ShareRoute
   '/skills': typeof SkillsRoute
-  '/agents/hermes': typeof AgentsHermesRoute
-  '/agents/openclaw': typeof AgentsOpenclawRoute
+  '/agents/jarvis': typeof AgentsJarvisRoute
   '/workspaces/$id': typeof WorkspacesIdRoute
   '/workspaces': typeof WorkspacesIndexRoute
 }
@@ -112,8 +104,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute
   '/share': typeof ShareRoute
   '/skills': typeof SkillsRoute
-  '/agents/hermes': typeof AgentsHermesRoute
-  '/agents/openclaw': typeof AgentsOpenclawRoute
+  '/agents/jarvis': typeof AgentsJarvisRoute
   '/workspaces/$id': typeof WorkspacesIdRoute
   '/workspaces/': typeof WorkspacesIndexRoute
 }
@@ -127,8 +118,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/share'
     | '/skills'
-    | '/agents/hermes'
-    | '/agents/openclaw'
+    | '/agents/jarvis'
     | '/workspaces/$id'
     | '/workspaces/'
   fileRoutesByTo: FileRoutesByTo
@@ -140,8 +130,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/share'
     | '/skills'
-    | '/agents/hermes'
-    | '/agents/openclaw'
+    | '/agents/jarvis'
     | '/workspaces/$id'
     | '/workspaces'
   id:
@@ -153,8 +142,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/share'
     | '/skills'
-    | '/agents/hermes'
-    | '/agents/openclaw'
+    | '/agents/jarvis'
     | '/workspaces/$id'
     | '/workspaces/'
   fileRoutesById: FileRoutesById
@@ -167,8 +155,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   ShareRoute: typeof ShareRoute
   SkillsRoute: typeof SkillsRoute
-  AgentsHermesRoute: typeof AgentsHermesRoute
-  AgentsOpenclawRoute: typeof AgentsOpenclawRoute
+  AgentsJarvisRoute: typeof AgentsJarvisRoute
   WorkspacesIdRoute: typeof WorkspacesIdRoute
   WorkspacesIndexRoute: typeof WorkspacesIndexRoute
 }
@@ -238,18 +225,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspacesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents/openclaw': {
-      id: '/agents/openclaw'
-      path: '/agents/openclaw'
-      fullPath: '/agents/openclaw'
-      preLoaderRoute: typeof AgentsOpenclawRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents/hermes': {
-      id: '/agents/hermes'
-      path: '/agents/hermes'
-      fullPath: '/agents/hermes'
-      preLoaderRoute: typeof AgentsHermesRouteImport
+    '/agents/jarvis': {
+      id: '/agents/jarvis'
+      path: '/agents/jarvis'
+      fullPath: '/agents/jarvis'
+      preLoaderRoute: typeof AgentsJarvisRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -263,8 +243,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   ShareRoute: ShareRoute,
   SkillsRoute: SkillsRoute,
-  AgentsHermesRoute: AgentsHermesRoute,
-  AgentsOpenclawRoute: AgentsOpenclawRoute,
+  AgentsJarvisRoute: AgentsJarvisRoute,
   WorkspacesIdRoute: WorkspacesIdRoute,
   WorkspacesIndexRoute: WorkspacesIndexRoute,
 }

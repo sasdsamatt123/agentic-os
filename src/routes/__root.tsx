@@ -83,6 +83,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { name: "twitter:card", content: "summary_large_image" },
       { property: "og:type", content: "website" },
+      {
+        property: "og:image",
+        content: "https://raw.githubusercontent.com/sasdsamatt123/agentic-os/main/docs/og.png",
+      },
+      {
+        name: "twitter:image",
+        content: "https://raw.githubusercontent.com/sasdsamatt123/agentic-os/main/docs/og.png",
+      },
     ],
     links: [
       { rel: "stylesheet", href: appCss },

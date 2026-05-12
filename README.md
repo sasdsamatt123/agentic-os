@@ -1,6 +1,6 @@
 # Agentic OS
 
-> Personal AI operator console. Local. Read-only. Dark.
+> The operator console for your AI agent stack. Local. Read-only. Dark.
 
 A one-page dashboard that reads what's already on disk — Claude Code sessions, installed skills, memory files, vector indexes, scheduled tasks, subscriptions — and renders one scrollable view with token spend, skills ROI, a 3D memory graph, and a daily **Dream** review that prescribes the four highest-impact things to fix today.
 
@@ -18,6 +18,7 @@ Built for one operator. No accounts. No telemetry. No phone-home.
 - **Memory graph** — 3D force-graph across Obsidian, `~/.claude/projects/*/memory/`, and Pinecone indexes.
 - **Integrations + vector indexes** — installed plugins, MCP servers, Pinecone indexes.
 - **Automations** — scheduled Claude Code tasks (`~/.claude/tasks/`), launchd plists.
+- **Agents** — JARVIS launcher (the voice + tool agent that lives inside [AgencyOS](https://github.com/sasdsamatt123/agencyos) at `localhost:3091`).
 - **Dream panel** — four prescription cards (memory · cost · skills · workflow) with a runnable command on each.
 
 The **Dream prescription engine** is the headline. Everything else is context.
@@ -77,6 +78,12 @@ Drop any of these into `.env.local` to unlock more:
 | `OBSIDIAN_VAULT_PATH` | Point at a non-default Obsidian vault |
 
 Then re-run `bun run aggregate`. The dashboard's Refresh button picks it up live.
+
+---
+
+## JARVIS (AgencyOS bridge)
+
+The `/agents/jarvis` route is a launcher for [JARVIS](https://github.com/sasdsamatt123/agencyos) — a Gemini Live voice agent with 96 MCP tools (lead scraping, CRM pipeline, project workspaces, automations, ops briefings). It lives inside the AgencyOS Vite app at `http://localhost:3091/#map`. The Agentic OS page shows status + a launch button — the agent itself runs in its own app.
 
 ---
 
