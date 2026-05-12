@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { runs as sampleRuns, outputs as sampleOutputs } from "@/lib/mock-data";
 import { useState } from "react";
 import {
   Terminal,
@@ -20,20 +19,24 @@ import { useLiveData } from "@/lib/use-live-data";
 let ld: any = {};
 let isDemoData = true;
 
-// The aggregator doesn't yet emit per-run records (TODO: scripts/aggregate.ts
-// would need to scan ~/.claude/projects/<key>/sessions/*.jsonl). Until that
-// lands, only show sample runs/outputs in demo mode — real users see an
-// empty state rather than fake "PR #412 reviewed" rows.
-let runs = sampleRuns;
-let outputs = sampleOutputs;
+// Aggregator (scripts/aggregate.ts) emits per-session runs[] + per-file
+// outputs[] in live-data.json. Each run has tools[], tokens, cost,
+// duration and a first-prompt summary; each output has the file path
+// it touched plus a reference back to its parent run.
+let runs: any[] = [];
+let outputs: any[] = [];
 
 const MODEL_KEYS: ModelKey[] = ["claude", "openai", "gemini", "llama", "deepseek"];
-function modelForRun(id: string): ModelKey {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  // Bias toward Claude to feel realistic
-  const bias = [0, 0, 0, 0, 1, 1, 2, 3, 4];
-  return MODEL_KEYS[bias[h % bias.length]];
+function modelForRun(modelOrId: string | undefined): ModelKey {
+  if (!modelOrId) return "claude";
+  const s = modelOrId.toLowerCase();
+  if (s.includes("claude")) return "claude";
+  if (s.includes("gpt") || s.startsWith("o1") || s.startsWith("o3") || s.includes("openai"))
+    return "openai";
+  if (s.includes("gemini") || s.includes("google")) return "gemini";
+  if (s.includes("llama")) return "llama";
+  if (s.includes("deepseek")) return "deepseek";
+  return "claude";
 }
 
 export const Route = createFileRoute("/activity")({
@@ -68,8 +71,8 @@ const typeIcons: Record<string, any> = {
 function ActivityPage() {
   ld = useLiveData();
   isDemoData = ld?.isExample === true;
-  runs = [];
-  outputs = [];
+  runs = Array.isArray(ld?.runs) ? ld.runs : [];
+  outputs = Array.isArray(ld?.outputs) ? ld.outputs : [];
   const [tab, setTab] = useState<"runs" | "outputs">("runs");
 
   return (
@@ -141,7 +144,7 @@ function RunsView() {
     {} as Record<ModelKey, { runs: number; tokens: number }>,
   );
   runs.forEach((r) => {
-    const k = modelForRun(r.id);
+    const k = modelForRun(r.model);
     totals[k].runs += 1;
     totals[k].tokens += r.tokens;
   });
@@ -192,7 +195,7 @@ function RunsView() {
           </thead>
           <tbody className="divide-y divide-border">
             {runs.map((r) => {
-              const mk = modelForRun(r.id);
+              const mk = modelForRun(r.model);
               const m = MODELS[mk];
               return (
                 <tr key={r.id} className="hover:bg-accent/30">

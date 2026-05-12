@@ -171,6 +171,31 @@ async function parseJsonls() {
     string,
     { lastMs: number; sessions: Set<string>; messages: number }
   > = {};
+
+  // Per-session accumulator — the Activity page renders one row per session.
+  // Categories below map raw Claude Code tool names into the 5 lucide icon
+  // buckets used by src/routes/activity.tsx: shell | git | browser | file edit | search.
+  type RunAcc = {
+    sessionId: string;
+    projKey: string;
+    startMs: number;
+    endMs: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreateTokens: number;
+    cost: number;
+    tools: Set<string>;
+    models: Map<string, number>;
+    firstUserPrompt: string;
+    slashCommand: string;
+    messageCount: number;
+    filesTouched: Set<string>;
+    commandsRun: number;
+    gitCommits: number;
+  };
+  const runs: Map<string, RunAcc> = new Map();
+
   let assistantTurnsLast5h = 0;
   let assistantTurnsLast7d = 0;
   // Real human-typed prompt counts. Anthropic's plan meter counts billable
@@ -222,6 +247,42 @@ async function parseJsonls() {
         if (row.sessionId) projectActivity[projKey].sessions.add(row.sessionId);
       }
 
+      // Per-session accumulator. Touch this on every row that carries a
+      // sessionId so we capture the full life of the session, not just
+      // assistant turns.
+      const sid: string | undefined = row.sessionId;
+      let run: RunAcc | undefined;
+      if (sid) {
+        run = runs.get(sid);
+        if (!run) {
+          run = {
+            sessionId: sid,
+            projKey,
+            startMs: ts || 0,
+            endMs: ts || 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreateTokens: 0,
+            cost: 0,
+            tools: new Set(),
+            models: new Map(),
+            firstUserPrompt: "",
+            slashCommand: "",
+            messageCount: 0,
+            filesTouched: new Set(),
+            commandsRun: 0,
+            gitCommits: 0,
+          };
+          runs.set(sid, run);
+        }
+        if (ts) {
+          if (!run.startMs || ts < run.startMs) run.startMs = ts;
+          if (ts > run.endMs) run.endMs = ts;
+        }
+        run.messageCount++;
+      }
+
       if (row.type === "user" && row.message?.role === "user") {
         totalUser++;
         projectActivity[projKey].messages++;
@@ -237,6 +298,25 @@ async function parseJsonls() {
         if (!isToolResult && ts) {
           if (now - ts < FIVE_H) userPromptsLast5h++;
           if (now - ts < SEVEN_D) userPromptsLast7d++;
+        }
+        // Capture the FIRST human-typed prompt as the session summary line.
+        if (run && !run.firstUserPrompt && !isToolResult) {
+          let text = "";
+          if (typeof content === "string") {
+            text = content;
+          } else if (Array.isArray(content)) {
+            for (const b of content) {
+              if (b && typeof b === "object" && b.type === "text" && typeof b.text === "string") {
+                text += b.text + " ";
+              }
+            }
+          }
+          text = text.trim();
+          if (text) {
+            run.firstUserPrompt = text.slice(0, 140);
+            const cmd = text.match(/^\/([\w-]+)/);
+            if (cmd) run.slashCommand = "/" + cmd[1];
+          }
         }
       }
 
@@ -270,14 +350,67 @@ async function parseJsonls() {
           familyTurnsWeekly[fam] = (familyTurnsWeekly[fam] || 0) + 1;
         }
 
+        const sessionCost = ts ? computeCost(m, u) : 0;
         if (ts) {
           const day = new Date(ts).toISOString().slice(0, 10);
-          const cost = computeCost(m, u);
           if (!dayBucket[day]) dayBucket[day] = { tokens: 0, messages: 0, cost: 0 };
           dayBucket[day].tokens += (u.input_tokens || 0) + (u.output_tokens || 0);
           dayBucket[day].messages++;
-          dayBucket[day].cost += cost;
-          if (now - ts < SEVEN_D) valueExtracted7d += cost;
+          dayBucket[day].cost += sessionCost;
+          if (now - ts < SEVEN_D) valueExtracted7d += sessionCost;
+        }
+
+        // Accumulate into the per-session record.
+        if (run) {
+          run.inputTokens += u.input_tokens || 0;
+          run.outputTokens += u.output_tokens || 0;
+          run.cacheReadTokens += u.cache_read_input_tokens || 0;
+          run.cacheCreateTokens += u.cache_creation_input_tokens || 0;
+          run.cost += sessionCost;
+          run.models.set(m, (run.models.get(m) ?? 0) + 1);
+
+          // Walk content blocks for tool_use signatures.
+          const acontent = row.message?.content;
+          if (Array.isArray(acontent)) {
+            for (const block of acontent) {
+              if (!block || typeof block !== "object" || block.type !== "tool_use") continue;
+              const tname: string = typeof block.name === "string" ? block.name : "";
+              const input = (block as any).input ?? {};
+              switch (tname) {
+                case "Bash": {
+                  const cmd = typeof input.command === "string" ? input.command : "";
+                  if (/^\s*git\s/.test(cmd)) {
+                    run.tools.add("git");
+                    if (/\bgit\s+commit\b/.test(cmd)) run.gitCommits++;
+                  } else {
+                    run.tools.add("shell");
+                  }
+                  run.commandsRun++;
+                  break;
+                }
+                case "Edit":
+                case "MultiEdit":
+                case "Write":
+                case "NotebookEdit": {
+                  run.tools.add("file edit");
+                  const fp =
+                    typeof input.file_path === "string" ? input.file_path : "";
+                  if (fp) run.filesTouched.add(fp);
+                  break;
+                }
+                case "WebFetch":
+                case "WebSearch":
+                  run.tools.add("browser");
+                  break;
+                case "Glob":
+                case "Grep":
+                case "Read":
+                case "ToolSearch":
+                  run.tools.add("search");
+                  break;
+              }
+            }
+          }
         }
       }
     }
@@ -296,6 +429,7 @@ async function parseJsonls() {
     totalAssistant,
     totalUser,
     valueExtracted7d,
+    runs,
   };
 }
 
@@ -2476,6 +2610,80 @@ async function main() {
       }))
       .sort((a, b) => b.lastActiveMs - a.lastActiveMs)
       .slice(0, 10),
+    runs: Array.from(parsed.runs.values())
+      .filter((r) => r.messageCount > 0)
+      .map((r) => {
+        const primaryModel = r.models.size
+          ? Array.from(r.models.entries()).sort((a, b) => b[1] - a[1])[0][0]
+          : "";
+        const durMs = Math.max(0, r.endMs - r.startMs);
+        const sanitizedProj = sanitize(r.projKey) ?? r.projKey;
+        const workspace = sanitizedProj.replace(/^-Users-[^-]+-/, "/").replace(/-/g, "/");
+        const summary = sanitize(r.firstUserPrompt) ?? "";
+        return {
+          id: r.sessionId.slice(0, 8),
+          sessionId: r.sessionId,
+          workspace,
+          projKey: sanitizedProj,
+          skill: r.slashCommand || "",
+          started: r.startMs ? humanAgo(Date.now() - r.startMs) : "—",
+          startedMs: r.startMs,
+          startedAt: r.startMs ? new Date(r.startMs).toISOString() : null,
+          duration: humanDuration(durMs),
+          durationMs: durMs,
+          status: "succeeded" as const,
+          tools: Array.from(r.tools).sort(),
+          tokens: r.inputTokens + r.outputTokens,
+          tokensIn: r.inputTokens,
+          tokensOut: r.outputTokens,
+          cacheRead: r.cacheReadTokens,
+          cacheCreate: r.cacheCreateTokens,
+          cost: Math.round(r.cost * 100) / 100,
+          summary: summary || "(no prompt captured)",
+          model: primaryModel,
+          messages: r.messageCount,
+          filesTouched: r.filesTouched.size,
+          commandsRun: r.commandsRun,
+          gitCommits: r.gitCommits,
+        };
+      })
+      .sort((a, b) => b.startedMs - a.startedMs)
+      .slice(0, 60),
+    outputs: Array.from(parsed.runs.values())
+      .flatMap((r) => {
+        const sanitizedProj = sanitize(r.projKey) ?? r.projKey;
+        const workspace = sanitizedProj.replace(/^-Users-[^-]+-/, "/").replace(/-/g, "/");
+        return Array.from(r.filesTouched).map((rawPath) => {
+          const fp = sanitize(rawPath) ?? rawPath;
+          const name = fp.split("/").pop() ?? fp;
+          const ext = (name.split(".").pop() ?? "").toLowerCase();
+          const type =
+            ext === "md"
+              ? "summary"
+              : ext === "tsx" || ext === "jsx"
+                ? "page"
+                : ext === "ts" || ext === "js"
+                  ? "page"
+                  : ext === "json"
+                    ? "data"
+                    : ext === "css" || ext === "scss"
+                      ? "page"
+                      : "summary";
+          return {
+            name,
+            path: fp,
+            type,
+            size: "—",
+            workspace,
+            skill: r.slashCommand || "",
+            run: r.sessionId.slice(0, 8),
+            updated: r.endMs ? humanAgo(Date.now() - r.endMs) : "—",
+            updatedMs: r.endMs,
+          };
+        });
+      })
+      .sort((a, b) => b.updatedMs - a.updatedMs)
+      .slice(0, 80),
     skills: {
       active: skillStats.map((s) => ({
         name: sanitize(s.name) ?? s.name,
@@ -2882,6 +3090,15 @@ function humanAgo(ms: number): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.round(h / 24);
   return `${d}d ago`;
+}
+
+function humanDuration(ms: number): string {
+  if (ms < 0 || !Number.isFinite(ms)) return "—";
+  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.round((ms % 3_600_000) / 60_000);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 main().catch((e) => {
