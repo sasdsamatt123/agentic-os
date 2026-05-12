@@ -1,0 +1,93 @@
+{
+  "isExample": true,
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "summary": {
+    "totalAssistantMessages": 0,
+    "totalUserMessages": 0,
+    "messagesLast7d": 0,
+    "messagesLast5h": 0,
+    "projectsTracked": 0,
+    "valueExtracted7d": 0
+  },
+  "subscriptions": {
+    "claude": null,
+    "chatgpt": null,
+    "openrouter": null,
+    "openclaw": null
+  },
+  "usage": {
+    "claudeWindow": null,
+    "chatgptWindow": null,
+    "openrouter": null
+  },
+  "modelUsage": [],
+  "daily": [],
+  "recentProjects": [],
+  "skills": {
+    "active": [],
+    "recommended": []
+  },
+  "integrations": [],
+  "automations": [],
+  "knowledgeStores": [],
+  "modelSplit": [],
+  "dream": null,
+  "detection": {
+    "apps": {
+      "antigravity": { "detected": false },
+      "claudeApp": { "detected": false },
+      "claudeCode": { "detected": false },
+      "cursor": { "detected": false },
+      "codex": { "detected": false },
+      "vscode": { "detected": false },
+      "vscodeInsiders": { "detected": false },
+      "zed": { "detected": false },
+      "windsurf": { "detected": false },
+      "jetbrains": { "detected": false },
+      "aider": { "detected": false },
+      "continueCli": { "detected": false },
+      "copilotCli": { "detected": false },
+      "cody": { "detected": false },
+      "goose": { "detected": false },
+      "terminals": {
+        "current": { "detected": false },
+        "installed": {
+          "warp": { "detected": false },
+          "ghostty": { "detected": false },
+          "iterm": { "detected": false },
+          "hyper": { "detected": false },
+          "alacritty": { "detected": false },
+          "wezterm": { "detected": false },
+          "tabby": { "detected": false },
+          "appleTerminal": { "detected": false }
+        }
+      }
+    },
+    "memoryStores": {
+      "pinecone": { "detected": false, "hasKey": false },
+      "obsidian": { "detected": false },
+      "notion": { "detected": false, "hasToken": false },
+      "logseq": { "detected": false }
+    },
+    "envKeysNeeded": [],
+    "envKeysPresent": []
+  },
+  "memory": {
+    "stats": {
+      "totalFiles": 0,
+      "totalWorkspaces": 0,
+      "stale": 0,
+      "missing": 0,
+      "freshness": 0,
+      "pineconeIndexes": 0,
+      "totalVectors": 0
+    },
+    "sourceList": [],
+    "events": [],
+    "recentlyUpdated": [],
+    "staleFiles": [],
+    "missing": [],
+    "nodes": [],
+    "links": []
+  }
+}

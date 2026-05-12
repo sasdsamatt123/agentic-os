@@ -1,0 +1,24 @@
+#!/bin/sh
+# Pre-commit hook: reject commits that contain real-looking API key values.
+#
+# Two pattern groups:
+# 1. Provider key prefixes followed by 20+ key-shaped characters. Catches
+#    leaked actual secrets while ignoring bare prefix mentions in code or
+#    comments.
+# 2. Common env var names assigned a value that looks real (16+ token
+#    characters). Skips placeholder values like KEY=<value>, KEY=xxx,
+#    KEY=your-key-here, etc.
+PROVIDER_KEYS='(pcsk_|sk-or-|sk-ant-|sk-proj-|sk_live_)[A-Za-z0-9_-]{20,}'
+ENV_ASSIGNMENTS='(PINECONE_API_KEY|OPENROUTER_API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY)=[A-Za-z0-9][A-Za-z0-9_-]{15,}'
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$STAGED" ]; then exit 0; fi
+DIFF=$(echo "$STAGED" | grep -v '\.lock$' | grep -v '\.png$' | grep -v '\.jpg$' | grep -v '\.svg$' | xargs git diff --cached -- 2>/dev/null | grep -E "^\+" | grep -v "^+++")
+MATCHES=$(printf "%s\n" "$DIFF" | grep -E "$PROVIDER_KEYS|$ENV_ASSIGNMENTS" || true)
+if [ -n "$MATCHES" ]; then
+  echo ""; echo "🔴 BLOCKED: Real-looking API key detected in staged changes."
+  echo ""; echo "$MATCHES" | head -10
+  echo ""; echo "If this is a placeholder/example, use a value shorter than"
+  echo "16 characters or include markers like <...>, xxx, your-key."
+  echo "Bypass with: git commit --no-verify"; echo ""
+  exit 1
+fi
