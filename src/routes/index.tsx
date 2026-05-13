@@ -1315,6 +1315,7 @@ export function Home({ forceSetupModal = false }: { forceSetupModal?: boolean } 
                 );
               })()}
             </div>
+            <DreamWinsStrip resolved={(ld?.dream as any)?.resolved ?? []} />
           </div>
         </section>
 
@@ -2005,6 +2006,61 @@ function LegendDot({ color, label }: { color: string; label: string }) {
         style={{ background: color, boxShadow: `0 0 6px ${color}` }}
       />
       <span className="text-foreground/80">{label}</span>
+    </div>
+  );
+}
+
+// Recent wins — prescriptions that Dream auto-resolved (or that the operator
+// accepted) since the previous run. Positive feedback loop: instead of the
+// dashboard only ever surfacing problems, it also says "this one fixed itself
+// — here's the evidence."
+function DreamWinsStrip({ resolved }: { resolved: any[] }) {
+  if (!Array.isArray(resolved) || resolved.length === 0) return null;
+  const titleize = (id: string) =>
+    String(id || "")
+      .replace(/^([a-z]+)-/, "$1 · ")
+      .replace(/-/g, " ");
+  return (
+    <div className="mt-3 rounded-xl border border-emerald-300/15 bg-emerald-500/[0.04] p-4">
+      <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-emerald-200/80 inline-flex items-center gap-2">
+          <CheckCircle2 className="h-3 w-3" />
+          Recent wins
+        </div>
+        <div className="text-[10.5px] text-emerald-200/55 tabular-nums">
+          {resolved.length} resolved since last week
+        </div>
+      </div>
+      <ul className="space-y-2">
+        {resolved.slice(0, 4).map((w: any) => (
+          <li
+            key={w.id}
+            className="flex items-start gap-3 text-[12px] text-emerald-50/90"
+          >
+            <span
+              aria-hidden
+              className="mt-1 h-1.5 w-1.5 rounded-full shrink-0"
+              style={{
+                background: "oklch(0.70 0.16 150)",
+                boxShadow: "0 0 6px oklch(0.70 0.16 150 / 60%)",
+              }}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium leading-snug text-emerald-50/95 mb-0.5">
+                {titleize(w.id)}
+              </div>
+              {w.resolvedReason && (
+                <div className="text-[11px] text-emerald-200/65 leading-snug">
+                  {w.resolvedReason}
+                </div>
+              )}
+            </div>
+            <span className="text-[10px] uppercase tracking-wider text-emerald-200/45 tabular-nums shrink-0">
+              {w.status === "accepted" ? "accepted" : "auto"}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -2969,16 +3025,60 @@ function DreamCarousel({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 mb-3 mt-1">
+          <div className="flex items-center gap-2 mb-3 mt-1 flex-wrap">
             <span
               className={`text-[9px] tracking-[0.2em] px-1.5 py-0.5 rounded border ${palette.chip}`}
             >
               {cur.cat}
             </span>
+            {/* State badge — surfaced from state.json by the aggregator. */}
+            {cur.status === "recurring" && (
+              <span
+                className="text-[9px] uppercase tracking-[0.18em] px-1.5 py-0.5 rounded border"
+                style={{
+                  background: "oklch(0.74 0.085 70 / 14%)",
+                  color: "oklch(0.85 0.10 70)",
+                  borderColor: "oklch(0.74 0.085 70 / 35%)",
+                }}
+                title="Dream surfaced this on a previous run and it's still unresolved"
+              >
+                Recurring · {Number(cur.ageDays ?? 0)}d
+              </span>
+            )}
+            {cur.status === "partial" && (
+              <span
+                className="text-[9px] uppercase tracking-[0.18em] px-1.5 py-0.5 rounded border"
+                style={{
+                  background: "oklch(0.65 0.18 250 / 12%)",
+                  color: "oklch(0.80 0.15 250)",
+                  borderColor: "oklch(0.65 0.18 250 / 35%)",
+                }}
+                title="You've made progress on this — Dream is watching to see if it sticks"
+              >
+                Partial
+              </span>
+            )}
+            {cur.status === "accepted" && (
+              <span
+                className="text-[9px] uppercase tracking-[0.18em] px-1.5 py-0.5 rounded border"
+                style={{
+                  background: "oklch(0.70 0.16 150 / 14%)",
+                  color: "oklch(0.85 0.16 150)",
+                  borderColor: "oklch(0.70 0.16 150 / 35%)",
+                }}
+              >
+                Accepted
+              </span>
+            )}
             <span className="text-[10px] uppercase tracking-wider text-violet-200/60 tabular-nums">
               {index + 1} / {total}
             </span>
           </div>
+          {cur.note && (
+            <div className="mb-3 -mt-1 text-[11px] italic text-violet-200/70 max-w-[58ch]">
+              Dream note: {cur.note}
+            </div>
+          )}
           <div className="text-[10px] uppercase tracking-[0.22em] text-violet-200/60 mb-2">
             {headlineByCat[cur.cat]}
           </div>

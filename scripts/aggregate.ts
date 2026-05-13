@@ -2330,10 +2330,12 @@ function detectOpenclaw() {
 }
 
 async function loadLatestDream() {
-  // Reads the most recent ~/.claude-os/dreams/dream-YYYY-MM-DD.json if it
-  // exists. The Dream pipeline (separate cron / `claude -p "/dream"`) writes
-  // these files; the aggregator just inlines the latest into liveData so the
-  // dashboard can render without filesystem access.
+  // Reads the most recent ~/.claude-os/dreams/dream-YYYY-MM-DD.json + the
+  // companion state.json. The Dream skill tracks each prescription across
+  // runs (new / recurring / partial / accepted / auto_resolved) — we merge
+  // that state onto each prescription so the dashboard can render age
+  // badges ("recurring · 3d") and a "recent wins" feed of auto-resolved
+  // items without the operator having to crack the JSON open.
   const dreamsDir = join(HOME, ".claude-os", "dreams");
   if (!existsSync(dreamsDir)) return null;
   let entries: string[] = [];
@@ -2347,14 +2349,73 @@ async function loadLatestDream() {
     .sort()
     .reverse();
   if (dated.length === 0) return null;
+
+  let parsed: any;
   try {
     const raw = readFileSync(join(dreamsDir, dated[0]), "utf-8");
-    const parsed = JSON.parse(raw);
-    return parsed;
+    parsed = JSON.parse(raw);
   } catch (err) {
     console.warn(`[aggregate] failed to parse latest dream JSON (${dated[0]}):`, err);
     return null;
   }
+
+  const statePath = join(dreamsDir, "state.json");
+  let state: any = null;
+  if (existsSync(statePath)) {
+    try {
+      state = JSON.parse(readFileSync(statePath, "utf-8"));
+    } catch (err) {
+      console.warn(`[aggregate] failed to parse Dream state.json:`, err);
+    }
+  }
+
+  if (state?.actions) {
+    const now = Date.now();
+    const ageDays = (iso?: string) => {
+      if (!iso) return 0;
+      const t = new Date(iso).getTime();
+      return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 86_400_000)) : 0;
+    };
+
+    // Enrich each current prescription with its history record.
+    parsed.prescriptions = (parsed.prescriptions ?? []).map((p: any) => {
+      const action = state.actions?.[p.id];
+      if (!action) return { ...p, status: "new", ageDays: 0 };
+      return {
+        ...p,
+        status: action.status ?? "new",
+        firstSeenAt: action.firstSeenAt,
+        lastSeenAt: action.lastSeenAt,
+        ageDays: ageDays(action.firstSeenAt),
+        note: action.note ?? null,
+      };
+    });
+
+    // Surface auto-resolved + accepted prescriptions as a wins feed.
+    const wins = Object.entries(state.actions)
+      .filter(
+        ([, a]: [string, any]) =>
+          a?.status === "auto_resolved" || a?.status === "accepted",
+      )
+      .map(([id, a]: [string, any]) => ({
+        id,
+        status: a.status,
+        resolvedAt: a.resolvedAt ?? a.acceptedAt ?? a.lastSeenAt,
+        resolvedReason: a.resolvedReason ?? a.note ?? null,
+        firstSeenAt: a.firstSeenAt,
+        ageDays: ageDays(a.firstSeenAt),
+      }))
+      .sort((x, y) => {
+        const tx = x.resolvedAt ? new Date(x.resolvedAt).getTime() : 0;
+        const ty = y.resolvedAt ? new Date(y.resolvedAt).getTime() : 0;
+        return ty - tx;
+      })
+      .slice(0, 4);
+    parsed.resolved = wins;
+    parsed.state = { lastRun: state.lastRun, currentTop4: state.currentTop4 ?? [] };
+  }
+
+  return parsed;
 }
 
 async function probeProjectsDir() {
