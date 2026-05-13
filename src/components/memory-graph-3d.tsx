@@ -309,6 +309,61 @@ function buildRandomData() {
 
 type ViewMode = "structured" | "blend" | "spheres" | "random";
 
+// Pre-flight WebGL check — three.js' WebGLRenderer throws if the browser
+// refuses a context (battery saver, GPU recovery, headless modes). We gate
+// the dynamic 3D import on this so a refused context never reaches the root
+// error boundary as "Error creating WebGL context".
+function hasWebGL(): boolean {
+  if (typeof document === "undefined") return false;
+  try {
+    const c = document.createElement("canvas");
+    return !!(c.getContext("webgl2") || c.getContext("webgl"));
+  } catch {
+    return false;
+  }
+}
+
+function Memory3DFallback({
+  embedded,
+  stats,
+  sourceCount,
+}: {
+  embedded: boolean;
+  stats: any;
+  sourceCount: number;
+}) {
+  return (
+    <div
+      className={`relative w-full ${embedded ? "h-full min-h-[420px]" : "min-h-[560px] h-full"} grid place-items-center px-6`}
+    >
+      <div className="text-center max-w-[420px]">
+        <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground/80 mb-2">
+          Memory at a glance
+        </div>
+        <div
+          className="font-mono text-[56px] font-semibold tabular-nums tracking-tight leading-none mb-1.5"
+          style={{ color: "oklch(0.78 0.10 70)" }}
+        >
+          {(stats.totalFiles ?? 0).toLocaleString()}
+        </div>
+        <div className="text-[13px] text-muted-foreground mb-4">
+          files across {sourceCount} sources
+          {typeof stats.stale === "number" && stats.stale > 0 && (
+            <>
+              {" · "}
+              <span className="text-foreground/75">{stats.stale} stale</span>
+            </>
+          )}
+        </div>
+        <div className="text-[11px] text-muted-foreground/65 max-w-[360px] mx-auto leading-relaxed">
+          The 3D graph couldn't initialise WebGL on this device.
+          {!embedded && " The page still works — the visualisation is the only part affected."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MemoryGraph3D({
   onSelect,
   embedded = false,
@@ -347,22 +402,32 @@ export function MemoryGraph3D({
   const rotatingRef = useRef(rotating);
   rotatingRef.current = rotating;
 
+  const [webglOk, setWebglOk] = useState<boolean | null>(null);
   useEffect(() => {
+    setWebglOk(hasWebGL());
+  }, []);
+
+  useEffect(() => {
+    if (webglOk !== true) return;
     let alive = true;
     Promise.all([
       import("react-force-graph-3d"),
       import("three"),
       import("three/examples/jsm/postprocessing/UnrealBloomPass.js"),
-    ]).then(([graphMod, threeMod, bloomMod]) => {
-      if (!alive) return;
-      setGraph(() => graphMod.default);
-      setThree(threeMod);
-      setBloomPass(() => bloomMod.UnrealBloomPass);
-    });
+    ])
+      .then(([graphMod, threeMod, bloomMod]) => {
+        if (!alive) return;
+        setGraph(() => graphMod.default);
+        setThree(threeMod);
+        setBloomPass(() => bloomMod.UnrealBloomPass);
+      })
+      .catch((err) => {
+        console.warn("[memory-graph-3d] dynamic import failed", err);
+      });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [webglOk]);
 
   // Filter links by density + by selected source category. Supports:
   //   "all"                        — no filter
@@ -550,6 +615,13 @@ export function MemoryGraph3D({
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [BloomPass, THREE, size.h, size.w]);
+
+  // No WebGL — render a clean fallback instead of letting the renderer throw.
+  if (webglOk === false) {
+    const stats = (graphLd as any)?.memory?.stats ?? {};
+    const sourceCount = ((graphLd as any)?.memory?.sources ?? []).length;
+    return <Memory3DFallback embedded={embedded} stats={stats} sourceCount={sourceCount} />;
+  }
 
   return (
     <>
