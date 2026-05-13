@@ -13,27 +13,64 @@ import { useLiveData } from "@/lib/use-live-data";
 function buildLiveWorkspaces(ld: any): Workspace[] {
   const projects = ld?.recentProjects;
   if (!Array.isArray(projects)) return [];
-  return projects.map(
-    (p: any): Workspace => ({
-      id: String(p?.key ?? ""),
-      name: String(p?.displayName ?? p?.key ?? "—"),
-      path: String(p?.displayName ?? p?.key ?? "—"),
+  const runs: any[] = Array.isArray(ld?.runs) ? ld.runs : [];
+  const outputs: any[] = Array.isArray(ld?.outputs) ? ld.outputs : [];
+
+  return projects.map((p: any): Workspace => {
+    const key = String(p?.key ?? "");
+    const displayName = String(p?.displayName ?? key ?? "—");
+
+    const wsRuns = runs.filter(
+      (r) => r?.projKey === key || r?.workspace === displayName,
+    );
+    const wsOutputs = outputs.filter((o) => {
+      const ow = String(o?.workspace ?? "");
+      return ow.length > 0 && (displayName === ow || displayName.endsWith(ow));
+    });
+
+    const skillUses = new Map<string, number>();
+    for (const r of wsRuns) {
+      if (r?.skill && typeof r.skill === "string" && r.skill.startsWith("/")) {
+        skillUses.set(r.skill, (skillUses.get(r.skill) ?? 0) + 1);
+      }
+    }
+    const activeSkills = Array.from(skillUses.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name);
+
+    const fileByName = new Map<string, number>();
+    for (const o of wsOutputs) {
+      const n = String(o?.name ?? "");
+      const ms = Number(o?.updatedMs ?? 0);
+      if (n && ms > (fileByName.get(n) ?? 0)) fileByName.set(n, ms);
+    }
+    const recentFiles = Array.from(fileByName.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12)
+      .map(([name]) => name);
+    const recentOutputs = recentFiles.slice(0, 8);
+
+    const totalCost = wsRuns.reduce((s, r) => s + (Number(r?.cost) || 0), 0);
+
+    return {
+      id: key,
+      name: displayName,
+      path: displayName,
       claudeMdStatus: "needs review",
       lastRun: String(p?.lastActiveAgo ?? "—"),
-      activeSkills: [],
-      recentFiles: [],
-      recentOutputs: [],
+      activeSkills,
+      recentFiles,
+      recentOutputs,
       memoryFreshness: 0,
-      usageToday: 0,
-      runs7d: Number(p?.sessions ?? 0) || 0,
+      usageToday: Math.round(totalCost),
+      runs7d: Number(p?.sessions ?? 0) || wsRuns.length,
       description: "",
-      summary:
-        "Per-workspace details aren't surfaced by the aggregator yet — only the high-level project signal is available.",
+      summary: "",
       memoryFiles: [],
       sessions: [],
       warnings: [],
-    }),
-  );
+    };
+  });
 }
 
 export const Route = createFileRoute("/workspaces/$id")({
@@ -59,8 +96,8 @@ function WorkspaceDetail() {
   const ld = useLiveData();
   const isDemoData = ld?.isExample === true;
   const allWorkspaces = buildLiveWorkspaces(ld);
-  const allRuns: any[] = [];
-  const allOutputs: any[] = [];
+  const allRuns: any[] = Array.isArray((ld as any)?.runs) ? (ld as any).runs : [];
+  const allOutputs: any[] = Array.isArray((ld as any)?.outputs) ? (ld as any).outputs : [];
   const { id } = Route.useParams();
   const ws = allWorkspaces.find((w) => w.id === id);
 
@@ -75,8 +112,14 @@ function WorkspaceDetail() {
     );
   }
 
-  const filteredRuns = allRuns.filter((r) => r.workspace === ws.name);
-  const filteredOutputs = allOutputs.filter((o) => o.workspace === ws.name);
+  // Match runs by projKey or workspace; outputs by workspace suffix.
+  const filteredRuns = allRuns.filter(
+    (r) => r?.projKey === ws.id || r?.workspace === ws.name,
+  );
+  const filteredOutputs = allOutputs.filter((o) => {
+    const ow = String(o?.workspace ?? "");
+    return ow.length > 0 && (ws.name === ow || ws.name.endsWith(ow));
+  });
 
   return (
     <div>

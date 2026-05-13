@@ -8,33 +8,81 @@ import { useLiveData } from "@/lib/use-live-data";
 let ld: any = {};
 let isDemoData = true;
 
-// Build minimal Workspace rows from the aggregator's recentProjects feed.
-// recentProjects.key is the slugified path; we fabricate just enough fields
-// to render the card (status, freshness, $ today are not yet emitted, so
-// they're shown as 0 / unknown rather than fake numbers from sample data).
+// Build Workspace rows from the aggregator's recentProjects feed, enriched
+// with per-workspace aggregates from runs[] and outputs[]. recentProjects.key
+// is the slugified path (e.g. "-Users-operator-Downloads-grow"); runs share
+// that key via projKey, and outputs reference workspace by displayName.
 function buildWorkspacesFromLive(): Workspace[] {
   const projects = (ld as any)?.recentProjects;
   if (!Array.isArray(projects)) return [];
-  return projects.map(
-    (p: any): Workspace => ({
-      id: String(p?.key ?? ""),
-      name: String(p?.displayName ?? p?.key ?? "—"),
-      path: String(p?.displayName ?? p?.key ?? "—"),
+  const runs: any[] = Array.isArray((ld as any)?.runs) ? (ld as any).runs : [];
+  const outputs: any[] = Array.isArray((ld as any)?.outputs) ? (ld as any).outputs : [];
+
+  return projects.map((p: any): Workspace => {
+    const key = String(p?.key ?? "");
+    const displayName = String(p?.displayName ?? key ?? "—");
+
+    // All runs/outputs that belong to this workspace. Match on both projKey
+    // (slug) and workspace (display path) since aggregator emits both.
+    const wsRuns = runs.filter(
+      (r) => r?.projKey === key || r?.workspace === displayName,
+    );
+    // outputs.workspace from the aggregator is a short tail like
+     // "/Downloads/grow", whereas displayName is the full "/Users/operator/..."
+     // form. Match by suffix so they line up.
+    const wsOutputs = outputs.filter((o) => {
+      const ow = String(o?.workspace ?? "");
+      return ow.length > 0 && (displayName === ow || displayName.endsWith(ow));
+    });
+
+    // Distinct slash-command skills used in this workspace, sorted by uses.
+    const skillUses = new Map<string, number>();
+    for (const r of wsRuns) {
+      if (r?.skill && typeof r.skill === "string" && r.skill.startsWith("/")) {
+        skillUses.set(r.skill, (skillUses.get(r.skill) ?? 0) + 1);
+      }
+    }
+    const activeSkills = Array.from(skillUses.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name);
+
+    // Recent output filenames (deduped, sorted by recency).
+    const fileByName = new Map<string, number>();
+    for (const o of wsOutputs) {
+      const n = String(o?.name ?? "");
+      const ms = Number(o?.updatedMs ?? 0);
+      if (n && ms > (fileByName.get(n) ?? 0)) fileByName.set(n, ms);
+    }
+    const recentOutputs = Array.from(fileByName.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name]) => name);
+
+    // Recent files touched (from runs' filesTouched count — keep names from outputs).
+    const recentFiles = recentOutputs.slice(0, 5);
+
+    // Total cost across this workspace's runs in the aggregator window.
+    const usageToday = wsRuns.reduce((s, r) => s + (Number(r?.cost) || 0), 0);
+
+    return {
+      id: key,
+      name: displayName,
+      path: displayName,
       claudeMdStatus: "needs review",
       lastRun: String(p?.lastActiveAgo ?? "—"),
-      activeSkills: [],
-      recentFiles: [],
-      recentOutputs: [],
+      activeSkills,
+      recentFiles,
+      recentOutputs,
       memoryFreshness: 0,
-      usageToday: 0,
-      runs7d: Number(p?.sessions ?? 0) || 0,
+      usageToday: Math.round(usageToday),
+      runs7d: Number(p?.sessions ?? 0) || wsRuns.length,
       description: "",
       summary: "",
       memoryFiles: [],
       sessions: [],
       warnings: [],
-    }),
-  );
+    };
+  });
 }
 
 // workspaces list is now computed inside WorkspacesPage()
