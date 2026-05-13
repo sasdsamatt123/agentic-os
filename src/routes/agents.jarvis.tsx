@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ExternalLink,
   Mic,
@@ -17,13 +17,17 @@ import {
   TrendingUp,
   ClipboardList,
   Sparkles,
+  Cloud,
+  Server,
 } from "lucide-react";
 import jarvisLogo from "@/assets/jarvis.svg?url";
 import { useLiveData } from "@/lib/use-live-data";
 
-const AGENCYOS_PORT = 3091;
-const AGENCYOS_URL = `http://localhost:${AGENCYOS_PORT}`;
-const AGENCYOS_OPEN_URL = `${AGENCYOS_URL}/#map`;
+// AgencyOS lives in the cloud (Netlify). The dev server on :3091 is an
+// optional local mirror for when the operator is hacking on AgencyOS itself.
+// We derive the hosted URL from the MCP config so a custom instance Just Works.
+const LOCAL_DEV_PORT = 3091;
+const LOCAL_DEV_URL = `http://localhost:${LOCAL_DEV_PORT}`;
 
 export const Route = createFileRoute("/agents/jarvis")({
   head: () => ({
@@ -39,20 +43,21 @@ export const Route = createFileRoute("/agents/jarvis")({
   component: JarvisPage,
 });
 
-type LiveStatus = "checking" | "online" | "offline";
+type LocalStatus = "checking" | "online" | "offline";
 
 function JarvisPage() {
   const ld = useLiveData() as any;
   const ao = ld?.agencyos as any;
 
-  const [status, setStatus] = useState<LiveStatus>("checking");
+  // Optional local dev mirror — only relevant if operator hacks on AgencyOS.
+  const [localStatus, setLocalStatus] = useState<LocalStatus>("checking");
   useEffect(() => {
     let cancelled = false;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 1500);
-    fetch(AGENCYOS_URL, { mode: "no-cors", signal: ctrl.signal })
-      .then(() => !cancelled && setStatus("online"))
-      .catch(() => !cancelled && setStatus("offline"))
+    fetch(LOCAL_DEV_URL, { mode: "no-cors", signal: ctrl.signal })
+      .then(() => !cancelled && setLocalStatus("online"))
+      .catch(() => !cancelled && setLocalStatus("offline"))
       .finally(() => clearTimeout(timer));
     return () => {
       cancelled = true;
@@ -68,6 +73,17 @@ function JarvisPage() {
   const clients = (ao?.clients ?? []) as any[];
   const retainerTotal = ao?.monthlyRetainerTotal ?? 0;
   const activeClientCount = ao?.activeClientCount ?? clients.length;
+
+  // Derive the hosted JARVIS URL from the MCP config the aggregator already
+  // wrote into live-data. The operator's MCP URL is the canonical "where does
+  // AgencyOS actually live" — strip the /mcp suffix to get the app home.
+  const mcpUrl: string = ao?.url ?? "";
+  const hostedBase = mcpUrl.replace(/\/mcp\/?$/, "");
+  const hostedOpenUrl = hostedBase ? `${hostedBase}/#map` : "";
+  const hostedHost = hostedBase ? hostedBase.replace(/^https?:\/\//, "").replace(/\/$/, "") : "";
+
+  const fetchedAtMs = ao?.fetchedAt ? new Date(ao.fetchedAt).getTime() : 0;
+  const ageMin = fetchedAtMs ? Math.max(0, Math.round((Date.now() - fetchedAtMs) / 60_000)) : -1;
 
   const goalMrr = state?.revenueGoal?.targetMrr ?? 0;
   const currency = state?.revenueGoal?.currency ?? "TRY";
@@ -97,18 +113,20 @@ function JarvisPage() {
               JARVIS
             </h1>
             <p className="mt-2 text-[14px] text-muted-foreground max-w-[640px] leading-relaxed">
-              Gemini Live voice + tool agent for your AgencyOS stack. The data below is read from
-              the AgencyOS MCP every aggregator pass — the panel works even when the local dev
-              server is off.
+              Gemini Live voice + tool agent. The data below is pulled from the hosted AgencyOS MCP
+              on every aggregator pass — JARVIS itself runs in your browser against the cloud, not
+              localhost.
             </p>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <StatusPill status={status} />
-          {ao?.fetchedAt && (
-            <span className="text-[10px] text-muted-foreground/70 tabular-nums">
-              data: {new Date(ao.fetchedAt).toLocaleTimeString()}
-            </span>
+        <div className="flex flex-col items-end gap-1.5">
+          <McpStatusPill
+            available={ao?.available === true}
+            ageMin={ageMin}
+            host={hostedHost}
+          />
+          {localStatus === "online" && (
+            <LocalDevPill />
           )}
         </div>
       </div>
@@ -273,27 +291,50 @@ function JarvisPage() {
       {/* Launch + capabilities */}
       <section>
         <div className="flex items-center gap-3 flex-wrap mb-6">
-          <button
-            onClick={() => window.open(AGENCYOS_OPEN_URL, "_blank", "noopener,noreferrer")}
-            className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors"
-            style={{
-              background: "oklch(0.65 0.18 250)",
-              color: "oklch(0.11 0.005 285)",
-              boxShadow: "0 6px 16px -6px oklch(0.65 0.18 250 / 45%)",
-            }}
-          >
-            Open JARVIS in AgencyOS
-            <ArrowUpRight className="h-4 w-4" />
-          </button>
-          <a
-            href={AGENCYOS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium border border-border hover:border-foreground/30 hover:bg-accent/30 transition-colors"
-          >
-            AgencyOS home
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
+          {hostedOpenUrl ? (
+            <button
+              onClick={() => window.open(hostedOpenUrl, "_blank", "noopener,noreferrer")}
+              className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors"
+              style={{
+                background: "oklch(0.65 0.18 250)",
+                color: "oklch(0.11 0.005 285)",
+                boxShadow: "0 6px 16px -6px oklch(0.65 0.18 250 / 45%)",
+              }}
+              title={hostedHost}
+            >
+              <Cloud className="h-4 w-4" />
+              Open JARVIS in AgencyOS
+              <ArrowUpRight className="h-4 w-4" />
+            </button>
+          ) : (
+            <span className="text-[12px] text-muted-foreground italic">
+              AgencyOS URL not configured — add the agencyos MCP server to ~/.claude/mcp.json
+            </span>
+          )}
+          {hostedBase && (
+            <a
+              href={hostedBase}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium border border-border hover:border-foreground/30 hover:bg-accent/30 transition-colors"
+              title={hostedHost}
+            >
+              AgencyOS home
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
+          {localStatus === "online" && (
+            <button
+              onClick={() =>
+                window.open(`${LOCAL_DEV_URL}/#map`, "_blank", "noopener,noreferrer")
+              }
+              className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium border border-border hover:border-foreground/30 hover:bg-accent/30 transition-colors"
+              title="A local dev mirror is running on this machine"
+            >
+              <Server className="h-3.5 w-3.5" />
+              Local dev · :{LOCAL_DEV_PORT}
+            </button>
+          )}
         </div>
         <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground/80 mb-3">
           Capabilities · 96 tools
@@ -313,31 +354,83 @@ function JarvisPage() {
 
 /* ── components ────────────────────────────────────────────── */
 
-function StatusPill({ status }: { status: LiveStatus }) {
-  const cfg = {
-    checking: { label: "Checking…", dot: "oklch(0.65 0.005 90)", ring: "oklch(1 0 0 / 10%)" },
-    online: {
-      label: `Dev server live · :${AGENCYOS_PORT}`,
-      dot: "oklch(0.70 0.16 150)",
-      ring: "oklch(0.70 0.16 150 / 35%)",
-    },
-    offline: {
-      label: "Dev server offline",
-      dot: "oklch(0.62 0.20 25)",
-      ring: "oklch(0.62 0.20 25 / 35%)",
-    },
-  }[status];
+function pillStyle(ring: string) {
+  return {
+    background: "oklch(0.18 0.005 285)",
+    border: `1px solid ${ring}`,
+  } as const;
+}
+
+function McpStatusPill({
+  available,
+  ageMin,
+  host,
+}: {
+  available: boolean;
+  ageMin: number;
+  host: string;
+}) {
+  if (!available) {
+    const ring = "oklch(0.62 0.20 25 / 35%)";
+    const dot = "oklch(0.62 0.20 25)";
+    return (
+      <div
+        className="shrink-0 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-medium"
+        style={pillStyle(ring)}
+      >
+        <span
+          aria-hidden
+          className="h-1.5 w-1.5 rounded-full"
+          style={{ background: dot, boxShadow: `0 0 8px ${dot}` }}
+        />
+        <span className="text-foreground/90">MCP not connected</span>
+      </div>
+    );
+  }
+  // Available — green if recent, amber if stale (>4 hours)
+  const stale = ageMin > 240;
+  const dot = stale ? "oklch(0.74 0.085 70)" : "oklch(0.70 0.16 150)";
+  const ring = stale ? "oklch(0.74 0.085 70 / 35%)" : "oklch(0.70 0.16 150 / 35%)";
+  const ageLabel =
+    ageMin < 0
+      ? ""
+      : ageMin === 0
+        ? "just now"
+        : ageMin < 60
+          ? `${ageMin} min ago`
+          : ageMin < 24 * 60
+            ? `${Math.round(ageMin / 60)} h ago`
+            : `${Math.round(ageMin / (24 * 60))} d ago`;
   return (
     <div
       className="shrink-0 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-medium"
-      style={{ background: "oklch(0.18 0.005 285)", border: `1px solid ${cfg.ring}` }}
+      style={pillStyle(ring)}
+      title={host ? `MCP host: ${host}` : undefined}
     >
+      <Cloud className="h-3 w-3 text-foreground/70" />
+      <span className="text-foreground/90">MCP live</span>
+      {ageLabel && (
+        <span className="text-muted-foreground/85 tabular-nums">· {ageLabel}</span>
+      )}
       <span
         aria-hidden
-        className="h-1.5 w-1.5 rounded-full"
-        style={{ background: cfg.dot, boxShadow: `0 0 8px ${cfg.dot}` }}
+        className="h-1.5 w-1.5 rounded-full ml-0.5"
+        style={{ background: dot, boxShadow: `0 0 8px ${dot}` }}
       />
-      <span className="text-foreground/90">{cfg.label}</span>
+    </div>
+  );
+}
+
+function LocalDevPill() {
+  const ring = "oklch(0.70 0.16 150 / 30%)";
+  return (
+    <div
+      className="shrink-0 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[10.5px] font-medium"
+      style={pillStyle(ring)}
+      title="Local AgencyOS dev server detected on :3091"
+    >
+      <Server className="h-2.5 w-2.5 text-foreground/65" />
+      <span className="text-muted-foreground/90">local dev · :{LOCAL_DEV_PORT}</span>
     </div>
   );
 }
