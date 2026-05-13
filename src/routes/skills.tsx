@@ -96,6 +96,67 @@ export const Route = createFileRoute("/skills")({
 
 const ACCENT = "oklch(0.72 0.17 155)";
 
+// Inline category bar chart — replaces recharts BarChart because the SVG
+// path-based rendering produced bars with zero height in headless capture
+// modes and on systems where Chrome's compositor was busy. CSS flex bars
+// always render, support our amber theme, and need no library.
+function CategoryBars({
+  data,
+}: {
+  data: { name: string; uses: number; count: number }[];
+}) {
+  const max = Math.max(...data.map((d) => d.uses), 1);
+  return (
+    <div>
+      <div className="flex items-end gap-3 h-44">
+        {data.map((c) => {
+          const pct = (c.uses / max) * 100;
+          const visible = c.uses > 0;
+          return (
+            <div key={c.name} className="flex-1 flex flex-col items-center justify-end h-full">
+              <div className="w-full flex items-end justify-center h-full px-2">
+                <div
+                  className="w-full rounded-t-md transition-[height] duration-500"
+                  style={{
+                    height: visible ? `${Math.max(pct, 2)}%` : "0",
+                    background: visible
+                      ? "linear-gradient(180deg, oklch(0.78 0.10 70) 0%, oklch(0.74 0.085 70) 100%)"
+                      : "transparent",
+                    boxShadow: visible
+                      ? "0 0 12px -2px oklch(0.74 0.085 70 / 40%), inset 0 1px 0 oklch(1 0 0 / 8%)"
+                      : "none",
+                  }}
+                  title={`${c.name}: ${c.uses} invocations · ${c.count} skill${c.count === 1 ? "" : "s"}`}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-start gap-3 mt-3 pt-2 border-t border-border/40">
+        {data.map((c) => (
+          <div
+            key={c.name}
+            className="flex-1 flex flex-col items-center text-center gap-0.5"
+          >
+            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/85">
+              {c.name}
+            </div>
+            <div className="font-mono text-[12px] tabular-nums font-semibold text-foreground/90">
+              {c.uses}
+            </div>
+            {c.count > 0 && (
+              <div className="text-[9.5px] text-muted-foreground/60">
+                {c.count} skill{c.count === 1 ? "" : "s"}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const categoryIcons: Record<string, any> = {
   Research: Search,
   Coding: Code2,
@@ -121,25 +182,22 @@ function SkillsPage() {
   const { minutesFor, setMinutesFor, rate, setRate, resetAll } = useTimeSaved();
   const t = liveTotals(minutesFor, rate, period);
 
-  const byCategory = useMemo(
-    () =>
-      skillCategories.map((c) => ({
-        name: c,
-        uses: skills.filter((s) => s.category === c).reduce((a, s) => a + s.uses, 0),
-        count: skills.filter((s) => s.category === c).length,
-      })),
-    [],
-  );
+  // `skills` is a module-level let mutated inside the component on every
+  // render — useMemo with an empty dep array would freeze byCategory at
+  // module load time (when skills is []). Compute inline; 59 items is cheap.
+  const byCategory = skillCategories.map((c) => ({
+    name: c,
+    uses: skills.filter((s) => s.category === c).reduce((a, s) => a + s.uses, 0),
+    count: skills.filter((s) => s.category === c).length,
+  }));
 
-  const topSavers = useMemo(() => {
-    return skills
-      .map((s) => {
-        const mins = minutesFor(s.name) * runsIn(s.uses, period);
-        return { name: s.name, category: s.category, mins, dollars: (mins / 60) * rate };
-      })
-      .sort((a, b) => b.mins - a.mins)
-      .slice(0, 6);
-  }, [minutesFor, rate, period]);
+  const topSavers = skills
+    .map((s) => {
+      const mins = minutesFor(s.name) * runsIn(s.uses, period);
+      return { name: s.name, category: s.category, mins, dollars: (mins / 60) * rate };
+    })
+    .sort((a, b) => b.mins - a.mins)
+    .slice(0, 6);
 
   return (
     <div className="max-w-[1400px]">
@@ -317,38 +375,11 @@ function SkillsPage() {
                 </div>
                 <div className="text-base font-semibold tracking-tight">Where the work happens</div>
               </div>
+              <div className="text-[10.5px] text-muted-foreground tabular-nums">
+                {byCategory.reduce((s, c) => s + c.uses, 0)} invocations · {byCategory.filter((c) => c.uses > 0).length} categories
+              </div>
             </div>
-            <div className="h-44 -mx-2">
-              <ResponsiveContainer>
-                <BarChart data={byCategory} margin={{ left: 0, top: 5, right: 8, bottom: 24 }}>
-                  <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
-                  <XAxis
-                    dataKey="name"
-                    stroke="var(--muted-foreground)"
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis
-                    stroke="var(--muted-foreground)"
-                    fontSize={10}
-                    tickLine={false}
-                    axisLine={false}
-                    width={32}
-                  />
-                  <Tooltip
-                    cursor={{ fill: "var(--accent)" }}
-                    contentStyle={{
-                      background: "var(--popover)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                  />
-                  <Bar dataKey="uses" fill={ACCENT} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <CategoryBars data={byCategory} />
           </section>
 
           {/* Filter */}
