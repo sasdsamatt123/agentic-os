@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Terminal,
   GitBranch,
@@ -71,13 +71,67 @@ const typeIcons: Record<string, any> = {
 function ActivityPage() {
   ld = useLiveData();
   isDemoData = ld?.isExample === true;
-  runs = Array.isArray(ld?.runs) ? ld.runs : [];
-  outputs = Array.isArray(ld?.outputs) ? ld.outputs : [];
+  const allRuns: any[] = Array.isArray(ld?.runs) ? ld.runs : [];
+  const allOutputs: any[] = Array.isArray(ld?.outputs) ? ld.outputs : [];
   const [tab, setTab] = useState<"runs" | "outputs">("runs");
+  const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(null);
+
+  // Group runs by workspace — answers the "where is my time/money actually going?"
+  // question that a flat session table can't.
+  const workspaceSummary = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        workspace: string;
+        runCount: number;
+        totalCost: number;
+        totalMessages: number;
+        totalTokens: number;
+        lastStartedMs: number;
+      }
+    >();
+    for (const r of allRuns) {
+      const k = r.workspace || r.projKey || "unknown";
+      let m = map.get(k);
+      if (!m) {
+        m = {
+          workspace: k,
+          runCount: 0,
+          totalCost: 0,
+          totalMessages: 0,
+          totalTokens: 0,
+          lastStartedMs: 0,
+        };
+        map.set(k, m);
+      }
+      m.runCount++;
+      m.totalCost += Number(r.cost) || 0;
+      m.totalMessages += Number(r.messages) || 0;
+      m.totalTokens += Number(r.tokens) || 0;
+      m.lastStartedMs = Math.max(m.lastStartedMs, Number(r.startedMs) || 0);
+    }
+    // Sort by total cost descending — operator's first question is "where
+    // is my money actually going?", not "what did I touch most recently".
+    // Recency is communicated via the per-tile "last activity Xd ago" line.
+    return Array.from(map.values()).sort((a, b) => b.totalCost - a.totalCost);
+  }, [allRuns]);
+
+  const totalCost = useMemo(
+    () => workspaceSummary.reduce((s, w) => s + w.totalCost, 0),
+    [workspaceSummary],
+  );
+
+  // Apply filter to module-level vars so the child views pick them up.
+  runs = selectedWorkspace
+    ? allRuns.filter((r: any) => (r.workspace || r.projKey) === selectedWorkspace)
+    : allRuns;
+  outputs = selectedWorkspace
+    ? allOutputs.filter((o: any) => o.workspace === selectedWorkspace)
+    : allOutputs;
 
   return (
     <div className="max-w-[1400px]">
-      <header className="border-b border-border pb-8 mb-10">
+      <header className="border-b border-border pb-8 mb-8">
         <div className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground mb-2 inline-flex items-center gap-2">
           <span>Activity</span>
           {isDemoData && (
@@ -93,15 +147,74 @@ function ActivityPage() {
               DEMO DATA
             </span>
           )}
+          {selectedWorkspace && (
+            <span className="inline-flex items-center gap-1.5 text-[10.5px] text-muted-foreground/85">
+              · filtered by{" "}
+              <code className="font-mono text-foreground/85">{selectedWorkspace}</code>
+              <button
+                onClick={() => setSelectedWorkspace(null)}
+                className="text-muted-foreground/60 hover:text-foreground"
+                title="Clear filter"
+              >
+                ×
+              </button>
+            </span>
+          )}
         </div>
         <h1 className="text-4xl font-semibold tracking-tight">
           {runs.length} <span className="text-muted-foreground/60 font-normal">runs · </span>
           {outputs.length} <span className="text-muted-foreground/60 font-normal">outputs</span>
         </h1>
         <p className="text-sm text-muted-foreground mt-2">
-          Every Claude Code session and the artefact it produced.
+          {selectedWorkspace
+            ? `Sessions and outputs scoped to ${selectedWorkspace}.`
+            : "Every Claude Code session and the artefact it produced."}
         </p>
       </header>
+
+      {/* Workspace strip — horizontal scroll of all workspaces, click to filter. */}
+      {workspaceSummary.length > 1 && (
+        <section className="mb-10">
+          <div className="flex items-baseline justify-between mb-3">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              Workspaces
+            </div>
+            <div className="text-[10.5px] text-muted-foreground/70 tabular-nums">
+              {workspaceSummary.length} · {allRuns.length} runs · ${totalCost.toFixed(0)}
+            </div>
+          </div>
+          <div className="flex gap-2.5 overflow-x-auto pb-2 -mx-1 px-1 snap-x snap-mandatory scrollbar-thin">
+            <WorkspaceTile
+              label="All workspaces"
+              fullPath=""
+              runCount={allRuns.length}
+              totalCost={totalCost}
+              totalMessages={workspaceSummary.reduce((s, w) => s + w.totalMessages, 0)}
+              lastStartedMs={Math.max(0, ...workspaceSummary.map((w) => w.lastStartedMs))}
+              selected={!selectedWorkspace}
+              onClick={() => setSelectedWorkspace(null)}
+              isAll
+            />
+            {workspaceSummary.map((w) => (
+              <WorkspaceTile
+                key={w.workspace}
+                label={shortLabel(w.workspace)}
+                fullPath={w.workspace}
+                runCount={w.runCount}
+                totalCost={w.totalCost}
+                totalMessages={w.totalMessages}
+                lastStartedMs={w.lastStartedMs}
+                selected={selectedWorkspace === w.workspace}
+                onClick={() =>
+                  setSelectedWorkspace(
+                    w.workspace === selectedWorkspace ? null : w.workspace,
+                  )
+                }
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="flex gap-1 mb-6 border-b border-border">
         {(["runs", "outputs"] as const).map((t) => (
@@ -124,9 +237,9 @@ function ActivityPage() {
 
       {runs.length === 0 && outputs.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border/60 p-10 text-center text-[13px] text-muted-foreground">
-          Per-run logs aren't surfaced by the aggregator yet — runs and outputs will appear here
-          once <code className="text-foreground/80">scripts/aggregate.ts</code> emits per-session
-          records.
+          {selectedWorkspace
+            ? `No runs found for ${selectedWorkspace}.`
+            : "Per-run logs aren't surfaced by the aggregator yet — runs and outputs will appear here once scripts/aggregate.ts emits per-session records."}
         </div>
       ) : tab === "runs" ? (
         <RunsView />
@@ -134,6 +247,90 @@ function ActivityPage() {
         <OutputsView />
       )}
     </div>
+  );
+}
+
+function shortLabel(workspace: string): string {
+  if (!workspace || workspace === "unknown") return workspace || "unknown";
+  // Worktree paths — surface as "<base> · wt:<branch>"
+  const wt = workspace.match(/^(.+?)\/+claude\/worktrees\/(.+)$/);
+  if (wt) {
+    const base = wt[1].replace(/^\/(Downloads|code|Users)\//, "").replace(/^\//, "");
+    return `${base} · wt:${wt[2]}`;
+  }
+  // Strip common parent directories — they carry no information.
+  return workspace.replace(/^\/(Downloads|code|Users)\//, "").replace(/^\//, "");
+}
+
+function humanAgoShort(ms: number): string {
+  if (!ms || ms < 0) return "—";
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.round(h / 24);
+  return `${d}d`;
+}
+
+function WorkspaceTile({
+  label,
+  fullPath,
+  runCount,
+  totalCost,
+  totalMessages,
+  lastStartedMs,
+  selected,
+  onClick,
+  isAll,
+}: {
+  label: string;
+  fullPath: string;
+  runCount: number;
+  totalCost: number;
+  totalMessages: number;
+  lastStartedMs: number;
+  selected: boolean;
+  onClick: () => void;
+  isAll?: boolean;
+}) {
+  const ago = isAll
+    ? ""
+    : lastStartedMs
+      ? `${humanAgoShort(Date.now() - lastStartedMs)} ago`
+      : "—";
+
+  return (
+    <button
+      onClick={onClick}
+      title={fullPath || label}
+      className={`shrink-0 w-[244px] snap-start rounded-lg border p-3.5 text-left transition-all ${
+        selected
+          ? "border-[oklch(0.74_0.085_70_/_60%)] bg-[oklch(0.74_0.085_70_/_8%)]"
+          : "border-border bg-card/30 hover:border-foreground/30 hover:bg-card/60"
+      }`}
+      style={
+        selected
+          ? {
+              boxShadow:
+                "inset 0 1px 0 oklch(1 0 0 / 4%), 0 0 24px -8px oklch(0.74 0.085 70 / 25%)",
+            }
+          : undefined
+      }
+    >
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+        <div className="text-[12.5px] font-semibold tracking-tight truncate min-w-0">{label}</div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground tabular-nums shrink-0 font-mono">
+          {runCount} {runCount === 1 ? "run" : "runs"}
+        </div>
+      </div>
+      <div className="flex items-baseline gap-3 text-[12px] text-muted-foreground font-mono tabular-nums">
+        <span className="text-foreground/85">${totalCost.toFixed(0)}</span>
+        <span>{totalMessages.toLocaleString()} msg</span>
+      </div>
+      <div className="text-[10.5px] text-muted-foreground/70 mt-1 tabular-nums">
+        {isAll ? "across all your work" : `last activity ${ago}`}
+      </div>
+    </button>
   );
 }
 
