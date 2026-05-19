@@ -1,21 +1,62 @@
-MIT License
+Claude OS — Personal & Commercial Use License with Attribution
+================================================================
 
-Copyright (c) 2026 Agentic OS operator
+Copyright (c) 2026 Jack Roberts. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software is distributed to members of Jack Roberts' community for
+personal use AND commercial use in their own work (including client
+projects, freelance deliverables, and internal company tooling),
+subject to the conditions below.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+YOU MAY:
+  ✓ Use this software on machines you own or control
+  ✓ Modify it for your own use
+  ✓ Use it in commercial work — client projects, freelance jobs,
+    your day job, your own startup's internal tooling
+  ✓ Run it indefinitely on any number of personal or work machines
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+YOU MUST:
+  ★ Provide visible attribution to "Claude OS by Jack Roberts" in any
+    public deliverable, presentation, blog post, video, social-media
+    post, or product page where this software materially contributed
+    to the work, with a link to:
+       https://github.com/ItsssssJack/claude-operating-system
+    A single line in the README, footer, credits screen, or
+    description is sufficient. Internal-only use (purely within your
+    own organisation, not shown to the public) does not require
+    attribution but it is appreciated.
+
+YOU MAY NOT:
+  ✗ Sell, rent, sublicense, or otherwise charge anyone for this
+    software (modified or unmodified)
+  ✗ Redistribute this software to anyone outside your own organisation
+    (whether publicly, privately, modified, or unmodified)
+  ✗ Re-upload this software to GitHub, GitLab, Bitbucket, package
+    registries (npm, pip, etc.), marketplaces, course platforms, or
+    any public or third-party source
+  ✗ Repackage this software — in whole or in substantial part — as a
+    product, course, template, starter kit, boilerplate, or similar
+    offering for distribution (free or paid)
+  ✗ Provide this software as a hosted/SaaS service to third parties
+  ✗ Remove this license notice or claim authorship of the software
+  ✗ Use the name "Claude OS" or the maintainer's name to market your
+    own product, service, course, or community
+  ✗ Use this software to build, train, or improve a competing
+    operator dashboard or AI-stack-observability product intended for
+    redistribution
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY
+CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+────────────────────────────────────────────────────────────────────
+Plain-English summary (not legally binding — see terms above):
+
+  Use it on every machine you own. Use it for client work and your
+  day job. Modify it however you want. Just credit me where the work
+  is shown publicly, and don't repackage it to sell or redistribute.
+────────────────────────────────────────────────────────────────────

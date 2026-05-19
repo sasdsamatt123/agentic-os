@@ -1,0 +1,91 @@
+Claude OS — NOTICE
+
+The Personal & Commercial Use License with Attribution (see LICENSE)
+governs the source code in this distribution. In short: use it on
+your machines and in your client work; credit Jack Roberts on any
+public deliverable it contributed to; do not redistribute, repackage,
+sell, or re-upload it. Read LICENSE for the binding terms.
+
+The notes below clarify what is NOT the maintainer's to license — the
+bundled brand marks, the Hermes Agent integration, the third-party
+icon source, and the AI-generated artwork — so anyone using this
+bundle understands the third-party scope.
+
+────────────────────────────────────────────────────────────────────────────
+1. Hermes Agent — inspiration & integration
+
+This dashboard is designed to observe and interoperate with Hermes Agent
+by Nous Research (https://hermes-agent.nousresearch.com,
+https://github.com/nousresearch/hermes-agent), distributed under MIT.
+
+The dashboard's Hermes page mirrors elements of the Hermes Agent
+visual identity (deep teal background, cream text, pixel-mark amber
+halo, Pantheon persona vocabulary). Those design tokens and naming
+conventions belong to Nous Research and are used here to render an
+operator surface for the agent on the user's own machine. No Hermes
+Agent code is bundled.
+
+────────────────────────────────────────────────────────────────────────────
+2. Anthropic trademark — Claude
+
+"Claude" is a trademark of Anthropic PBC. Claude OS is an independent
+project and is NOT affiliated with, endorsed by, sponsored by, or
+otherwise connected to Anthropic PBC. The project name uses "Claude"
+descriptively — to identify the AI assistant this dashboard observes
+on the operator's machine.
+
+────────────────────────────────────────────────────────────────────────────
+3. Bundled brand marks
+
+The folder src/assets/logos/ contains brand glyphs for third-party
+tools that Claude OS reads from on the operator's local machine.
+They are included only for nominative identification of the services
+the dashboard observes — not as a claim of partnership, sponsorship,
+or endorsement.
+
+Glyphs are sourced from Simple Icons (https://simpleicons.org/,
+released into the public domain via CC0). Simple Icons publishes the
+SVGs but does not own the underlying marks. Each mark in this folder
+is the property of its respective brand holder:
+
+  Aider, Antigravity, Apify, Canva, Claude / Anthropic, Codex / OpenAI,
+  Cody, Continue, Copilot / Microsoft, Cursor, Firecrawl, Gamma,
+  Gemini / Google, Gmail / Google, Google Calendar / Google,
+  Google Drive / Google, Goose, Granola, Higgsfield, JetBrains, n8n,
+  NotebookLM / Google, Notion, Obsidian, OpenAI, OpenClaw, OpenRouter,
+  Pinecone, Stitch, Supabase, Telegram, VS Code / Microsoft, Windsurf,
+  YouTube / Google, Zapier, Zed.
+
+Anyone redistributing this project must honour each brand's
+trademark and logo-usage guidelines independently. The LICENSE above
+does not grant any right to those marks.
+
+────────────────────────────────────────────────────────────────────────────
+4. AI-generated artwork
+
+Illustrations under src/assets/hermes-art/, src/assets/dream/,
+src/assets/skills/, and src/assets/dream-*.jpg were generated via
+Kie.ai's Nano Banana 2 model (https://kie.ai/). Kie.ai retains no
+ownership of generated outputs; the prompts and resulting images are
+included in this bundle for use under the LICENSE terms above.
+
+The hermes-portrait images (src/assets/hermes-portrait*.png) are
+crops of an image generated via Higgsfield AI (https://higgsfield.ai/);
+the same license terms apply.
+
+────────────────────────────────────────────────────────────────────────────
+5. Local-only data
+
+This project never bundles, transmits, or commits the operator's
+machine data. The aggregator script writes to src/data/live-data.json
+(gitignored). Only the empty template src/data/live-data.example.json
+ships with the project.
+
+────────────────────────────────────────────────────────────────────────────
+6. Skills
+
+skills/dream/ and skills/personas/ ship under the LICENSE above,
+alongside the rest of the project. They install onto a fresh user's
+~/.claude/skills/ and ~/.hermes/skills/ via `bun run setup`.
+
+────────────────────────────────────────────────────────────────────────────

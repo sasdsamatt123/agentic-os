@@ -1764,6 +1764,8 @@ interface AppDetections {
   claudeCode: AppDetection;
   cursor: AppDetection;
   codex: AppDetection;
+  // Hermes Agent (Nous Research) — detected via ~/.hermes/ directory
+  hermes: AppDetection;
   // IDEs / editors
   vscode: AppDetection;
   vscodeInsiders: AppDetection;
@@ -1961,6 +1963,20 @@ async function detectApps(): Promise<AppDetections> {
     codexCli || codexAuthPresent
       ? { detected: true, version: sanitize(codexVersion) }
       : { detected: false };
+
+  // Hermes Agent (Nous Research) — installs to ~/.hermes/ with bin/hermes
+  // inside hermes-agent/venv/. We detect by directory + bin presence and
+  // optionally probe the venv binary for a version string.
+  const hermesHome = process.env.HERMES_HOME || join(HOME, ".hermes");
+  const hermesVenvBin = join(hermesHome, "hermes-agent", "venv", "bin", "hermes");
+  const hermesInstalled = existsSync(hermesHome) && existsSync(hermesVenvBin);
+  let hermesVersion: string | undefined;
+  if (hermesInstalled) {
+    hermesVersion = await probeCliVersion(hermesVenvBin, ["--version"], 1500);
+  }
+  const hermes: AppDetection = hermesInstalled
+    ? { detected: true, path: sanitize(hermesVenvBin), version: sanitize(hermesVersion) }
+    : { detected: false };
 
   // ---------- IDEs / editors ----------
 
@@ -2164,6 +2180,7 @@ async function detectApps(): Promise<AppDetections> {
     claudeCode,
     cursor,
     codex,
+    hermes,
     vscode,
     vscodeInsiders,
     zed,

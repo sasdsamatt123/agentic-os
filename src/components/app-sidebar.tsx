@@ -3,6 +3,8 @@ import { Home, Sparkles, Brain, Activity, Settings as SettingsIcon } from "lucid
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import jarvisLogo from "@/assets/jarvis.svg?url";
+import hermesLogo from "@/assets/hermes-agent.png";
+import openclawLogo from "@/assets/openclaw.png";
 
 const AVATAR_STORAGE_KEY = "claude-os.avatar.v1";
 const OPERATOR_NAME_KEY = "claude-os.operator-name.v1";
@@ -90,6 +92,8 @@ const primary = [
 
 const agents = [
   { to: "/agents/jarvis", label: "JARVIS", logo: jarvisLogo, tone: "#4A9EFF" },
+  { to: "/agents/hermes", label: "Hermes Agent", logo: hermesLogo, tone: "#FFD21E" },
+  { to: "/agents/openclaw", label: "OpenClaw", logo: openclawLogo, tone: "#EF4444" },
 ];
 
 export function AppSidebar() {

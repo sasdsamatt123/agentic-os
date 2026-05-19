@@ -34,40 +34,101 @@
   "dream": null,
   "detection": {
     "apps": {
-      "antigravity": { "detected": false },
-      "claudeApp": { "detected": false },
-      "claudeCode": { "detected": false },
-      "cursor": { "detected": false },
-      "codex": { "detected": false },
-      "vscode": { "detected": false },
-      "vscodeInsiders": { "detected": false },
-      "zed": { "detected": false },
-      "windsurf": { "detected": false },
-      "jetbrains": { "detected": false },
-      "aider": { "detected": false },
-      "continueCli": { "detected": false },
-      "copilotCli": { "detected": false },
-      "cody": { "detected": false },
-      "goose": { "detected": false },
+      "antigravity": {
+        "detected": false
+      },
+      "claudeApp": {
+        "detected": false
+      },
+      "claudeCode": {
+        "detected": false
+      },
+      "cursor": {
+        "detected": false
+      },
+      "codex": {
+        "detected": false
+      },
+      "hermes": {
+        "detected": false
+      },
+      "vscode": {
+        "detected": false
+      },
+      "vscodeInsiders": {
+        "detected": false
+      },
+      "zed": {
+        "detected": false
+      },
+      "windsurf": {
+        "detected": false
+      },
+      "jetbrains": {
+        "detected": false
+      },
+      "aider": {
+        "detected": false
+      },
+      "continueCli": {
+        "detected": false
+      },
+      "copilotCli": {
+        "detected": false
+      },
+      "cody": {
+        "detected": false
+      },
+      "goose": {
+        "detected": false
+      },
       "terminals": {
-        "current": { "detected": false },
+        "current": {
+          "detected": false
+        },
         "installed": {
-          "warp": { "detected": false },
-          "ghostty": { "detected": false },
-          "iterm": { "detected": false },
-          "hyper": { "detected": false },
-          "alacritty": { "detected": false },
-          "wezterm": { "detected": false },
-          "tabby": { "detected": false },
-          "appleTerminal": { "detected": false }
+          "warp": {
+            "detected": false
+          },
+          "ghostty": {
+            "detected": false
+          },
+          "iterm": {
+            "detected": false
+          },
+          "hyper": {
+            "detected": false
+          },
+          "alacritty": {
+            "detected": false
+          },
+          "wezterm": {
+            "detected": false
+          },
+          "tabby": {
+            "detected": false
+          },
+          "appleTerminal": {
+            "detected": false
+          }
         }
       }
     },
     "memoryStores": {
-      "pinecone": { "detected": false, "hasKey": false },
-      "obsidian": { "detected": false },
-      "notion": { "detected": false, "hasToken": false },
-      "logseq": { "detected": false }
+      "pinecone": {
+        "detected": false,
+        "hasKey": false
+      },
+      "obsidian": {
+        "detected": false
+      },
+      "notion": {
+        "detected": false,
+        "hasToken": false
+      },
+      "logseq": {
+        "detected": false
+      }
     },
     "envKeysNeeded": [],
     "envKeysPresent": []
