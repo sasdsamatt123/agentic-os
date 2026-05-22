@@ -3164,6 +3164,7 @@ async function main() {
     memory,
     detection,
     dream,
+    argus: scanArgus(),
   };
 
   const emitted = sanitizeForEmission(data);
@@ -3290,6 +3291,180 @@ async function pollAgencyOS(): Promise<any> {
   } catch (e) {
     return { available: false, fetchedAt, error: (e as Error).message };
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// scanArgus()
+//
+// Reads ~/.hermes/argus/ state files (written by argus-monitor.ts and friends)
+// and emits a compact summary into live-data.argus for the /argus dashboard
+// route to render. Optional subsystem — returns {enabled:false} if ~/.hermes
+// isn't present, so users who never ran `bun run install-argus` see nothing
+// broken on the dashboard.
+// ────────────────────────────────────────────────────────────────────────────
+function scanArgus(): any {
+  const argusDir = join(HOME, ".hermes", "argus");
+  if (!existsSync(argusDir)) return { enabled: false, reason: "no ~/.hermes/argus dir" };
+
+  function safeReadArgus<T>(name: string, fallback: T): T {
+    try {
+      const p = join(argusDir, name);
+      if (!existsSync(p)) return fallback;
+      return JSON.parse(readFileSync(p, "utf-8")) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
+  const state = safeReadArgus<any>("state.json", { last_seen: {}, last_run_at: null });
+  const review = safeReadArgus<any[]>("pending_review.json", []);
+  const auto = safeReadArgus<any[]>("pending_auto.json", []);
+  const sent = safeReadArgus<any[]>("sent.json", []);
+  const cost = safeReadArgus<any>("cost.json", { daily: {}, monthly_total_usd: 0 });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const todayCost = cost.daily?.[today] ?? null;
+  const todaySent = sent.filter((s: any) => s?.sent_at?.startsWith?.(today));
+
+  const topReview = [...review]
+    .sort(
+      (a: any, b: any) =>
+        (b?.scoring?.relevance_score ?? 0) - (a?.scoring?.relevance_score ?? 0),
+    )
+    .slice(0, 12)
+    .map((r: any) => ({
+      id: r.id,
+      created_at: r.created_at,
+      watch_id: r.watch_id,
+      tweet: {
+        id: r.tweet?.id,
+        url: sanitize(r.tweet?.url) ?? r.tweet?.url,
+        author: r.tweet?.author,
+        text: r.tweet?.text,
+        created_at: r.tweet?.created_at,
+        has_url: r.tweet?.has_url,
+      },
+      scoring: r.scoring,
+      action: r.action,
+      draft_text: r.draft_text,
+      reason: r.reason,
+    }));
+
+  let watchlistSummary: any = null;
+  try {
+    const wlPath = join(import.meta.dir, "..", "config", "argus-watchlist.json");
+    if (existsSync(wlPath)) {
+      const wl = JSON.parse(readFileSync(wlPath, "utf-8"));
+      watchlistSummary = {
+        mentions: wl.mentions?.length ?? 0,
+        hashtags: wl.hashtags?.length ?? 0,
+        accounts: wl.accounts?.length ?? 0,
+        keywords: wl.keywords?.length ?? 0,
+        polling_minutes: wl.polling?.interval_minutes ?? 30,
+        auto_like_enabled: wl.auto_rules?.auto_like_rules?.enabled ?? false,
+        auto_reply_enabled: wl.auto_rules?.auto_reply_rules?.enabled ?? false,
+        hard_ceiling: wl.auto_rules?.hard_ceilings?.daily_total_actions ?? 60,
+      };
+    }
+  } catch {}
+
+  let cronLoaded = false;
+  const cronJobs: Record<string, boolean> = {};
+  try {
+    const p = Bun.spawnSync(["launchctl", "list"], { stdout: "pipe", stderr: "pipe" });
+    const out = p.stdout?.toString() ?? "";
+    for (const label of [
+      "com.argus.monitor",
+      "com.argus.engage",
+      "com.argus.track",
+      "com.argus.learn",
+      "com.argus.telegram",
+    ]) {
+      cronJobs[label] = out.includes(label);
+    }
+    cronLoaded = cronJobs["com.argus.monitor"]!;
+  } catch {}
+
+  let learning: any = { patches: [], latest_digest: null };
+  try {
+    const patchesDir = join(argusDir, "rules-patches");
+    if (existsSync(patchesDir)) {
+      const files: string[] = readdirSync(patchesDir)
+        .filter((f) => f.endsWith(".md"))
+        .sort()
+        .reverse()
+        .slice(0, 14);
+      learning.patches = files.map((f) => ({
+        date: f.replace(/\.md$/, ""),
+        path: join(patchesDir, f),
+      }));
+      if (files.length > 0) {
+        const latest = files[0]!;
+        const body = readFileSync(join(patchesDir, latest), "utf-8");
+        learning.latest_digest = {
+          date: latest.replace(/\.md$/, ""),
+          excerpt: body.split("\n").slice(0, 40).join("\n"),
+        };
+      }
+    }
+  } catch {}
+
+  const finalized = sent.filter(
+    (s: any) => s?.finalized && typeof s?.composite_score === "number",
+  );
+  function groupAvg(items: any[], keyFn: (s: any) => string | null) {
+    const buckets = new Map<string, { sum: number; n: number; likes: number; replies: number }>();
+    for (const s of items) {
+      const k = keyFn(s);
+      if (!k) continue;
+      if (!buckets.has(k)) buckets.set(k, { sum: 0, n: 0, likes: 0, replies: 0 });
+      const b = buckets.get(k)!;
+      b.sum += s.composite_score ?? 0;
+      b.n += 1;
+      b.likes += s.public_metrics?.like_count ?? 0;
+      b.replies += s.public_metrics?.reply_count ?? 0;
+    }
+    return Array.from(buckets, ([key, v]) => ({
+      key,
+      n: v.n,
+      avg_composite: v.sum / Math.max(1, v.n),
+      avg_likes: v.likes / Math.max(1, v.n),
+      avg_replies: v.replies / Math.max(1, v.n),
+    })).sort((a, b) => b.avg_composite - a.avg_composite);
+  }
+  const templates = groupAvg(finalized, (s) => s?.template ?? null).slice(0, 8);
+  const bestHours = groupAvg(finalized, (s) =>
+    typeof s?.posted_hour === "number" ? `${s.posted_hour}` : null,
+  ).slice(0, 12);
+  const topAuthors = groupAvg(finalized, (s) => s?.author ?? null).slice(0, 8);
+
+  return {
+    enabled: true,
+    last_run_at: state.last_run_at,
+    batches_seen: Object.keys(state.last_seen ?? {}).length,
+    counts: {
+      review: review.length,
+      auto: auto.length,
+      sent_total: sent.length,
+      sent_today: todaySent.length,
+      finalized: finalized.length,
+    },
+    cost: {
+      today: todayCost,
+      month_total_usd: cost.monthly_total_usd ?? 0,
+    },
+    cron_loaded: cronLoaded,
+    cron_jobs: cronJobs,
+    watchlist: watchlistSummary,
+    top_review: topReview,
+    recent_sent: sent.slice(-8).reverse(),
+    learning,
+    leaderboards: {
+      templates,
+      best_hours: bestHours,
+      top_authors: topAuthors,
+    },
+  };
 }
 
 main().catch((e) => {

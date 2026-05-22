@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "_meta": {
+    "sector": "community-mgr",
+    "description": "Watchlist preset for brand / community managers. Fill accounts + keywords with your brand surface.",
+    "isExample": true
+  },
+  "mentions": [
+    "@your_brand_handle"
+  ],
+  "hashtags": [
+    "#yourbrand"
+  ],
+  "accounts": [],
+  "keywords": [
+    "your product name",
+    "your brand mention without hashtag"
+  ],
+  "exclude_keywords": [
+    "airdrop",
+    "shitcoin",
+    "DM me"
+  ],
+  "auto_rules": {
+    "auto_like_rules": {
+      "enabled": false,
+      "max_per_day": 50,
+      "conditions": {
+        "sentiment": ["friendly", "neutral"],
+        "is_mention": true,
+        "follower_count_min": 1
+      }
+    },
+    "auto_reply_rules": {
+      "enabled": false,
+      "max_per_day": 10,
+      "max_per_hour": 3,
+      "active_hours": "08:00-20:00",
+      "conditions": {
+        "sentiment": ["question", "friendly"],
+        "relevance_score_min": 70,
+        "tweet_age_max_minutes": 120,
+        "thread_depth_max": 2,
+        "must_match_any_pattern": ["how do I", "having trouble", "anyone know"],
+        "exclude_url_replies": true
+      },
+      "templates": ["support_concrete_answer", "warm_value_first"]
+    },
+    "auto_post_rules": {
+      "enabled": false,
+      "comment": "Never enable — Argus replies + likes only, never originates posts."
+    },
+    "hard_ceilings": {
+      "daily_total_actions": 60,
+      "after_ceiling": "queue_for_manual_review",
+      "emergency_kill_switch": "pause_via_telegram"
+    }
+  },
+  "polling": {
+    "interval_minutes": 30,
+    "max_results_per_query": 25,
+    "scan_categories": ["mentions", "hashtags", "accounts", "keywords"]
+  }
+}

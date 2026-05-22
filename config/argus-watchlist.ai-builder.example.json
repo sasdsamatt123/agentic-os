@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "_meta": {
+    "sector": "ai-builder",
+    "description": "Watchlist preset for AI/agent builders. Edit accounts/keywords to match your interests.",
+    "isExample": true
+  },
+  "mentions": [
+    "@your_handle"
+  ],
+  "hashtags": [
+    "#AIagents",
+    "#vibecoding",
+    "#ClaudeCode",
+    "#buildinpublic",
+    "#LLMops"
+  ],
+  "accounts": [
+    "AnthropicAI",
+    "OpenAI",
+    "vercel"
+  ],
+  "keywords": [
+    "claude code",
+    "AI agent",
+    "agent framework",
+    "MCP server",
+    "agentic workflow"
+  ],
+  "exclude_keywords": [
+    "airdrop",
+    "shitcoin",
+    "DM me",
+    "join my discord"
+  ],
+  "auto_rules": {
+    "auto_like_rules": {
+      "enabled": false,
+      "max_per_day": 50,
+      "conditions": {
+        "sentiment": ["friendly", "neutral"],
+        "is_mention": true,
+        "follower_count_min": 10
+      }
+    },
+    "auto_reply_rules": {
+      "enabled": false,
+      "max_per_day": 10,
+      "max_per_hour": 3,
+      "active_hours": "07:00-23:00",
+      "conditions": {
+        "sentiment": ["question", "friendly"],
+        "relevance_score_min": 75,
+        "tweet_age_max_minutes": 60,
+        "thread_depth_max": 2,
+        "must_match_any_pattern": ["how do you", "anyone tried", "looking for"],
+        "exclude_url_replies": true
+      },
+      "templates": ["concrete_answer", "warm_value_first"]
+    },
+    "auto_post_rules": {
+      "enabled": false,
+      "comment": "Never enable — Argus replies + likes only, never originates posts."
+    },
+    "hard_ceilings": {
+      "daily_total_actions": 60,
+      "after_ceiling": "queue_for_manual_review",
+      "emergency_kill_switch": "pause_via_telegram"
+    }
+  },
+  "polling": {
+    "interval_minutes": 30,
+    "max_results_per_query": 25,
+    "scan_categories": ["mentions", "hashtags", "accounts", "keywords"]
+  }
+}

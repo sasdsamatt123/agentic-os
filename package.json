@@ -21,7 +21,9 @@
     "seed:data": "test -f src/data/live-data.json || cp src/data/live-data.example.json src/data/live-data.json",
     "aggregate": "bun run scripts/aggregate.ts",
     "install-dream": "bun run scripts/install-dream-cron.ts",
-    "uninstall-dream": "bun run scripts/install-dream-cron.ts --uninstall"
+    "uninstall-dream": "bun run scripts/install-dream-cron.ts --uninstall",
+    "install-argus": "bun run scripts/install-argus.ts",
+    "uninstall-argus": "bun run scripts/install-argus-cron.ts --uninstall"
   },
   "dependencies": {
     "@cloudflare/vite-plugin": "^1.25.5",

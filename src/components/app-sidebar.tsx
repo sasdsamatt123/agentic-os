@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Home, Sparkles, Brain, Activity, Settings as SettingsIcon } from "lucide-react";
+import { Home, Sparkles, Brain, Activity, Eye, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import jarvisLogo from "@/assets/jarvis.svg?url";
@@ -88,6 +88,7 @@ const primary = [
   { to: "/skills", label: "Skills", icon: Sparkles },
   { to: "/memory", label: "Memory", icon: Brain },
   { to: "/activity", label: "Activity", icon: Activity },
+  { to: "/argus", label: "Argus", icon: Eye },
 ];
 
 const agents = [

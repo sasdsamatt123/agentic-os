@@ -33,15 +33,17 @@ connect API keys, or customize the dashboard.
 - **Setting up API keys**: Guide them to create `.env.local` with `PINECONE_API_KEY` and `OPENROUTER_API_KEY`
 - **Installing the Dream skill**: `mkdir -p ~/.claude/skills && cp -r skills/dream ~/.claude/skills/dream`
 - **Installing the Dream cron**: `bun run install-dream` (macOS launchd, runs daily at 7am)
+- **Installing Argus** (24/7 X engagement agent): `bun run install-argus` — interactive wizard sets up monitor + engage + track + learn cron jobs. See `docs/ARGUS.md`.
 - **Customizing skills ROI**: The Skills Saved panel in the dashboard lets users set minutes-per-run for each skill. Guide them to click the Skills Saved card → set their hourly rate → enter time estimates per skill.
 
 ## Important Rules
 
 1. **Never read or write to `~/.claude/` directly** — the aggregator script is the only thing that reads source data
-2. **All personal data stays local** — `live-data.json` is gitignored, never committed
-3. **Anonymization is on by default** — the aggregator redacts the macOS username, emails, and configured names
-4. **No telemetry, no phone-home** — the only outbound calls are to APIs the user explicitly provides keys for
-5. **The dashboard is read-only** — it never modifies the user's Claude Code data, Obsidian notes, or any source files
+2. **Never read or write to `~/.hermes/argus/` directly** — Argus owns that path. The aggregator's `scanArgus()` summarizes it; everything else is for the cron jobs.
+3. **All personal data stays local** — `live-data.json` and `config/argus-watchlist.json` are gitignored, never committed
+4. **Anonymization is on by default** — the aggregator redacts the macOS username, emails, and configured names
+5. **No telemetry, no phone-home** — the only outbound calls are to APIs the user explicitly provides keys for
+6. **The dashboard is read-only** — it never modifies the user's Claude Code data, Obsidian notes, or any source files
 
 ## Project Structure
 

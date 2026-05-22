@@ -124,6 +124,28 @@ bun run uninstall-dream
 
 ---
 
+## Argus (optional, 24/7 X engagement agent)
+
+A self-tuning agent that watches X for mentions / hashtags / accounts /
+keywords you care about, drafts replies in your voice, and (when you opt
+in) fires them via the X API. Runs every 30 min, tracks engagement over
+24h windows, auto-tunes its rules using a Karpathy-style autoresearch
+loop.
+
+```bash
+bun run install-argus
+```
+
+The wizard asks 5 questions (sector preset, your X handle, active hours,
+optional Telegram bot, watchlist), then installs 5 launchd jobs and a
+dashboard panel at `/argus`.
+
+Default mode is **draft-only** (~$14/mo for `x_search`). Auto-fire needs
+an X Developer app + xurl (~$20–30/mo total). Full guide:
+[`docs/ARGUS.md`](docs/ARGUS.md).
+
+---
+
 ## Daily commands
 
 ```bash
@@ -132,6 +154,8 @@ bun run aggregate         # re-scan and refresh live-data.json
 bun run build             # production build
 bun run install-dream     # install daily Dream cron
 bun run uninstall-dream   # remove cron
+bun run install-argus     # install 24/7 X engagement agent
+bun run uninstall-argus   # remove all 5 Argus cron jobs
 ```
 
 ---
