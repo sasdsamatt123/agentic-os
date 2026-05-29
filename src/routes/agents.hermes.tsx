@@ -2150,6 +2150,48 @@ function HermesChatActive({ status }: { status: HermesStatus }) {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [loadingSession, setLoadingSession] = useState(false);
 
+  // Active persona — read from ?persona= in the URL. When set, every chat
+  // turn POSTs `personaId` and the backend overrides Hermes' model + skills
+  // + tools + system_prompt against that persona's YAML. URL is the single
+  // source of truth so a deep link survives reloads and lets "Activate" in
+  // the Pantheon modal trigger the switch with one navigate() call.
+  const [activePersonaId, setActivePersonaId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const sp = new URLSearchParams(window.location.search);
+    const p = sp.get("persona");
+    return p && /^[a-z0-9_-]{1,32}$/.test(p) ? p : null;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const read = () => {
+      const sp = new URLSearchParams(window.location.search);
+      const p = sp.get("persona");
+      const next = p && /^[a-z0-9_-]{1,32}$/.test(p) ? p : null;
+      setActivePersonaId((prev) => (prev === next ? prev : next));
+    };
+    read();
+    // TanStack Router pushes state without firing popstate, so poll the
+    // search string at 250ms — invisible during normal use, cheap.
+    const iv = window.setInterval(read, 250);
+    window.addEventListener("popstate", read);
+    return () => {
+      window.clearInterval(iv);
+      window.removeEventListener("popstate", read);
+    };
+  }, []);
+  const { data: pantheonData } = useHermesPantheon();
+  const activePersona =
+    activePersonaId && pantheonData?.personas
+      ? pantheonData.personas.find((p) => p.id === activePersonaId) ?? null
+      : null;
+  function exitPersona() {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("persona");
+    window.history.pushState({}, "", url.toString());
+    setActivePersonaId(null);
+  }
+
   // Auto-grow textarea up to ~8 lines so longer drafts stay visible
   // instead of scrolling out of sight.
   useEffect(() => {
@@ -2392,11 +2434,13 @@ function HermesChatActive({ status }: { status: HermesStatus }) {
         },
         // Pass the active session id when we're inside a loaded thread —
         // Hermes' --resume flag picks up the prior context.
-        body: JSON.stringify(
-          activeSessionId
-            ? { prompt: promptForServer, sessionId: activeSessionId }
-            : { prompt: promptForServer },
-        ),
+        // Pass activePersonaId so the backend overrides Hermes' model +
+        // skills + tools + system_prompt against the persona's YAML.
+        body: JSON.stringify({
+          prompt: promptForServer,
+          ...(activeSessionId ? { sessionId: activeSessionId } : {}),
+          ...(activePersonaId ? { personaId: activePersonaId } : {}),
+        }),
       });
     } catch (err: any) {
       setMessages((prev) =>
@@ -2542,17 +2586,73 @@ function HermesChatActive({ status }: { status: HermesStatus }) {
 
           {/* Chat header — minimal pill, no expand toggle (chat is always
               full-width now). Pixel HERMES-AGENT logo moved out of the
-              header and into the empty-state, centered h+w. */}
+              header and into the empty-state, centered h+w.
+              When a Pantheon persona is active, the header swaps to a
+              persona pill (avatar + name + model badge + exit X). This is
+              the only visual cue the user has that they've left default
+              Hermes, so it stays compact but unmistakable. */}
           <div
-            className="relative border-b px-5 py-3"
+            data-hermes-chat-anchor
+            className="relative border-b px-5 py-3 flex items-center justify-between gap-3"
             style={{ borderColor: "rgba(255,230,203,0.2)" }}
           >
-            <div
-              className="hermes-mono text-[11px] uppercase tracking-[0.22em] truncate"
-              style={{ color: CREAM }}
-            >
-              {activeSessionId ? `❯ Resuming · ${activeSessionId.slice(0, 18)}` : "❯ New Chat"}
-            </div>
+            {activePersona ? (
+              <>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {PERSONA_AVATAR_BY_ID[activePersona.id] && (
+                    <img
+                      src={PERSONA_AVATAR_BY_ID[activePersona.id]}
+                      alt=""
+                      aria-hidden
+                      className="h-6 w-6 rounded-sm object-cover shrink-0"
+                      style={{ borderColor: "rgba(255,230,203,0.35)" }}
+                    />
+                  )}
+                  <span
+                    className="hermes-display text-[15px] truncate"
+                    style={{ color: CREAM, letterSpacing: "0.01em" }}
+                  >
+                    {activePersona.name}
+                  </span>
+                  <span
+                    className="hermes-mono text-[10px] uppercase tracking-[0.2em] px-1.5 py-0.5 border shrink-0"
+                    style={{
+                      color: "rgba(255,230,203,0.85)",
+                      borderColor: "rgba(255,230,203,0.35)",
+                    }}
+                  >
+                    {activePersona.model?.provider ?? "?"} ·{" "}
+                    {activePersona.model?.name ?? "?"}
+                  </span>
+                </div>
+                <button
+                  onClick={exitPersona}
+                  title="Exit persona — return to default Hermes"
+                  className="hermes-mono text-[10px] uppercase tracking-[0.2em] px-2 py-1 border transition-colors shrink-0"
+                  style={{
+                    color: "rgba(255,230,203,0.6)",
+                    borderColor: "rgba(255,230,203,0.25)",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = CREAM;
+                    e.currentTarget.style.borderColor = "rgba(255,230,203,0.55)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = "rgba(255,230,203,0.6)";
+                    e.currentTarget.style.borderColor = "rgba(255,230,203,0.25)";
+                  }}
+                >
+                  exit ×
+                </button>
+              </>
+            ) : (
+              <div
+                className="hermes-mono text-[11px] uppercase tracking-[0.22em] truncate"
+                style={{ color: CREAM }}
+              >
+                {activeSessionId ? `❯ Resuming · ${activeSessionId.slice(0, 18)}` : "❯ New Chat"}
+              </div>
+            )}
           </div>
 
           {/* Scrolling message area */}
@@ -3494,7 +3594,7 @@ function PantheonCatalog({ personas }: { personas: PersonaYaml[] }) {
   const visible = [...featuredFirst, ...rest];
 
   return (
-    <section className="mb-12">
+    <section id="pillar-pantheon" className="mb-12 scroll-mt-24">
       <SectionHead
         title="Pantheon"
         meta={`${personas.length} persona${personas.length === 1 ? "" : "s"} on disk`}
@@ -3976,6 +4076,49 @@ function PersonaCard({
   const [editing, setEditing] = useState(false);
   const avatar = PERSONA_AVATAR_BY_ID[persona.id.toLowerCase()];
   const jobLabel = personaJob(persona);
+  // Read active persona from URL so this card knows whether to render its
+  // "ACTIVE" state. Same poll pattern as HermesChatActive — TanStack Router
+  // doesn't fire popstate when search changes, so we tick every 250ms.
+  const [activePersonaId, setActivePersonaId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const sp = new URLSearchParams(window.location.search);
+    const p = sp.get("persona");
+    return p && /^[a-z0-9_-]{1,32}$/.test(p) ? p : null;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const read = () => {
+      const sp = new URLSearchParams(window.location.search);
+      const p = sp.get("persona");
+      const next = p && /^[a-z0-9_-]{1,32}$/.test(p) ? p : null;
+      setActivePersonaId((prev) => (prev === next ? prev : next));
+    };
+    read();
+    const iv = window.setInterval(read, 250);
+    window.addEventListener("popstate", read);
+    return () => {
+      window.clearInterval(iv);
+      window.removeEventListener("popstate", read);
+    };
+  }, []);
+  const isActive = activePersonaId === persona.id;
+  function activate(e: React.MouseEvent) {
+    // Stop bubbling so the surrounding card button doesn't open the edit modal.
+    e.stopPropagation();
+    e.preventDefault();
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("persona", persona.id);
+    window.history.pushState({}, "", url.toString());
+    // Notify the chat panel (same poll picks it up within 250ms, but a
+    // synthetic popstate makes it instant).
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    // Scroll to chat area so the user sees the persona-flipped header.
+    const chatEl = document.querySelector("[data-hermes-chat-anchor]");
+    if (chatEl && typeof (chatEl as HTMLElement).scrollIntoView === "function") {
+      (chatEl as HTMLElement).scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
   return (
     <>
       <button
@@ -3983,13 +4126,22 @@ function PersonaCard({
         onClick={() => setEditing(true)}
         className="group relative border overflow-hidden flex flex-col transition-all text-left w-full"
         style={{
-          borderColor: "rgba(255,230,203,0.4)",
+          borderColor: isActive ? CREAM : "rgba(255,230,203,0.4)",
           background: "rgba(0,0,0,0.32)",
+          boxShadow: isActive
+            ? "0 0 0 1px rgba(255,230,203,0.55), 0 0 24px rgba(255,230,203,0.18)"
+            : undefined,
         }}
-        onMouseEnter={(e) =>
-          (e.currentTarget.style.borderColor = "rgba(255,230,203,0.85)")
-        }
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(255,230,203,0.4)")}
+        onMouseEnter={(e) => {
+          if (!isActive) {
+            e.currentTarget.style.borderColor = "rgba(255,230,203,0.85)";
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!isActive) {
+            e.currentTarget.style.borderColor = "rgba(255,230,203,0.4)";
+          }
+        }}
         title={`Edit ${persona.name}`}
       >
         <div className="aspect-square relative overflow-hidden">
@@ -4017,6 +4169,43 @@ function PersonaCard({
             style={{ border: "1px solid rgba(255,230,203,0.45)" }}
           />
           <SyncBadge status={syncStatus} hasRepo={hasRepo} />
+          {/* "ACTIVE" badge — top-left, only shown when this persona is the
+              one currently driving chat. Persists (not hover-gated) so the
+              status is always visible at a glance. */}
+          {isActive && (
+            <span
+              className="hermes-mono absolute top-2 left-2 inline-flex items-center px-2 py-1 border text-[9.5px] uppercase tracking-[0.22em]"
+              style={{
+                background: "rgba(7,29,28,0.92)",
+                color: CREAM,
+                borderColor: CREAM,
+              }}
+            >
+              ● Active
+            </span>
+          )}
+          {/* "Activate" pill — bottom-left. Mirrors the Edit pill on the
+              right. Click flips the persona for chat without opening the
+              edit modal (e.stopPropagation in handler). */}
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={activate}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") activate(e as any);
+            }}
+            className="hermes-mono absolute bottom-2 left-2 inline-flex items-center gap-1 px-2 py-1 border text-[9.5px] uppercase tracking-[0.22em] opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+            style={{
+              background: isActive ? "rgba(255,230,203,0.92)" : "rgba(7,29,28,0.92)",
+              color: isActive ? "#071D1C" : CREAM,
+              borderColor: CREAM,
+              opacity: isActive ? 1 : undefined,
+            }}
+            title={isActive ? `${persona.name} is the active chat persona` : `Use ${persona.name} for the next chat turn`}
+          >
+            <Zap style={{ width: 10, height: 10 }} />
+            {isActive ? "Active" : "Activate"}
+          </span>
           {/* "Edit" pill that fades in on hover so it's obvious the card
               is interactive. */}
           <span
@@ -4747,7 +4936,7 @@ function HermesPantheonGitHubSync() {
   const { data } = useHermesPantheon();
   const personas = data?.personas ?? [];
   return (
-    <section className="mb-12">
+    <section id="pillar-crons" className="mb-12 scroll-mt-24">
       <SectionHead
         title="Take Hermes anywhere"
         meta="private repo · portable across machines"
@@ -4926,7 +5115,7 @@ function HermesMemorySection() {
     );
   }
   return (
-    <section className="mb-12">
+    <section id="pillar-memory" className="mb-12 scroll-mt-24">
       <SectionHead
         title="Memory"
         meta={`${data.hermesHome} · ${data.sessionCount} sessions · ${data.skillCount} skills`}
@@ -5016,6 +5205,7 @@ function MemoryThreeLayers({
         avatar={PERSONA_AVATAR_BY_ID.labyrinth}
         emptyHint="Hermes hasn't filed any system facts yet. Workflows, environment notes, and learned conventions will appear here."
       />
+      <div id="pillar-soul" className="scroll-mt-24">
       <ManuscriptPage
         title="Soul"
         subtitle="personality, not memory"
@@ -5027,6 +5217,7 @@ function MemoryThreeLayers({
         avatar={PERSONA_AVATAR_BY_ID.philosopher}
         emptyHint="No voice defined yet — Hermes will speak in its default tone. Edit SOUL.md to teach it how to talk."
       />
+      </div>
     </div>
   );
 }
@@ -6168,7 +6359,7 @@ function HermesLiveSkills() {
   const ACCENTS = ["#60a5fa", "#FFD21E", "#86efac", "#FFE6CB"];
 
   return (
-    <section className="mb-12">
+    <section id="pillar-skills" className="mb-12 scroll-mt-24">
       <SectionHead
         title="Skill Library"
         meta={`${skills.length} categories · ~/.hermes/skills/`}

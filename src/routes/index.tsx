@@ -3074,22 +3074,28 @@ function DreamCarousel({
               {index + 1} / {total}
             </span>
           </div>
-          {cur.note && (
-            <div className="mb-3 -mt-1 text-[11px] italic text-violet-200/70 max-w-[58ch]">
-              Dream note: {cur.note}
-            </div>
-          )}
-          <div className="text-[10px] uppercase tracking-[0.22em] text-violet-200/60 mb-2">
-            {headlineByCat[cur.cat]}
-          </div>
-          <div className="text-[15px] md:text-[17px] font-semibold leading-snug text-violet-50 mb-3 max-w-[42ch]">
-            {cur.headline}
-          </div>
-          <p className="text-[12px] md:text-[13px] leading-relaxed text-violet-100/80 mb-4 max-w-[58ch]">
-            {cur.prescription}
-          </p>
 
+          {/* Everything content-wise lives inside one scroll container so
+              long Dream notes + multi-line prescriptions never get clipped
+              at the bottom of the 440px card. Meta cluster stays absolutely
+              positioned in the top-right corner above this. */}
           <div className="flex-1 md:overflow-y-auto pr-1 space-y-4">
+            {cur.note && (
+              <div className="text-[11px] italic text-violet-200/70 max-w-[58ch]">
+                Dream note: {cur.note}
+              </div>
+            )}
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.22em] text-violet-200/60 mb-2">
+                {headlineByCat[cur.cat]}
+              </div>
+              <div className="text-[15px] md:text-[17px] font-semibold leading-snug text-violet-50 mb-3 max-w-[42ch]">
+                {cur.headline}
+              </div>
+              <p className="text-[12px] md:text-[13px] leading-relaxed text-violet-100/80 max-w-[58ch]">
+                {cur.prescription}
+              </p>
+            </div>
             <div className="pl-3 border-l border-white/10">
               <div className="text-[9px] uppercase tracking-[0.2em] text-violet-200/60 mb-1.5">
                 Why we're suggesting this

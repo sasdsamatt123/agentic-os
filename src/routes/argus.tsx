@@ -114,6 +114,34 @@ function ArgusPage() {
         }
       />
 
+      {/* Engage-chain status banner — fades away the moment xurl finishes
+          its first successful post. While `sent_total === 0` we tell the
+          operator (and any on-screen viewer during a recording) exactly
+          what's still needed to close the loop: xurl on PATH + auth. */}
+      {argus.cron_loaded && (counts.sent_total ?? 0) === 0 && (counts.review ?? 0) > 0 && (
+        <div
+          className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-[12.5px]"
+          role="status"
+        >
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-400" />
+            <div className="flex-1 min-w-0 text-amber-100/90">
+              <div className="font-medium text-amber-200">
+                Capture chain healthy · engage chain awaiting xurl auth
+              </div>
+              <div className="mt-1 text-amber-100/70 leading-relaxed">
+                Monitor + track + learn cron'ları çalışıyor ({counts.review ?? 0} post review
+                kuyruğunda). Engage adımı için son iki şey:{" "}
+                <code className="rounded bg-amber-500/10 px-1 py-0.5">brew install xurl</code>{" "}
+                ve{" "}
+                <code className="rounded bg-amber-500/10 px-1 py-0.5">xurl auth login</code>.
+                İlk başarılı post atıldığında bu uyarı otomatik kaybolur.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard

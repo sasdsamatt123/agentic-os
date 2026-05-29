@@ -14,6 +14,7 @@ import { Route as ShareRouteImport } from './routes/share'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as MemoryRouteImport } from './routes/memory'
+import { Route as ArgusRouteImport } from './routes/argus'
 import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspacesIndexRouteImport } from './routes/workspaces.index'
@@ -45,6 +46,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const MemoryRoute = MemoryRouteImport.update({
   id: '/memory',
   path: '/memory',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ArgusRoute = ArgusRouteImport.update({
+  id: '/argus',
+  path: '/argus',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ActivityRoute = ActivityRouteImport.update({
@@ -86,6 +92,7 @@ const AgentsHermesRoute = AgentsHermesRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
+  '/argus': typeof ArgusRoute
   '/memory': typeof MemoryRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -100,6 +107,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
+  '/argus': typeof ArgusRoute
   '/memory': typeof MemoryRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -115,6 +123,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
+  '/argus': typeof ArgusRoute
   '/memory': typeof MemoryRoute
   '/settings': typeof SettingsRoute
   '/setup': typeof SetupRoute
@@ -131,6 +140,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/activity'
+    | '/argus'
     | '/memory'
     | '/settings'
     | '/setup'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/activity'
+    | '/argus'
     | '/memory'
     | '/settings'
     | '/setup'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/activity'
+    | '/argus'
     | '/memory'
     | '/settings'
     | '/setup'
@@ -174,6 +186,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ActivityRoute: typeof ActivityRoute
+  ArgusRoute: typeof ArgusRoute
   MemoryRoute: typeof MemoryRoute
   SettingsRoute: typeof SettingsRoute
   SetupRoute: typeof SetupRoute
@@ -221,6 +234,13 @@ declare module '@tanstack/react-router' {
       path: '/memory'
       fullPath: '/memory'
       preLoaderRoute: typeof MemoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/argus': {
+      id: '/argus'
+      path: '/argus'
+      fullPath: '/argus'
+      preLoaderRoute: typeof ArgusRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/activity': {
@@ -278,6 +298,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ActivityRoute: ActivityRoute,
+  ArgusRoute: ArgusRoute,
   MemoryRoute: MemoryRoute,
   SettingsRoute: SettingsRoute,
   SetupRoute: SetupRoute,

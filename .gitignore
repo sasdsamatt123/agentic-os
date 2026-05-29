@@ -43,3 +43,6 @@ config/argus-watchlist.json
 *.sln
 *.sw?
 claude-os
+
+# understand-anything plugin cache — generated knowledge graph, not source
+.understand-anything/

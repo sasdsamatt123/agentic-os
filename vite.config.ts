@@ -376,11 +376,18 @@ export default defineConfig({
             }
 
             // OAuth providers don't store an API key in ~/.hermes/.env —
-            // credentials live in Hermes' OAuth token store. For those,
-            // having `provider:` set in config.yaml is sufficient to say
-            // "Hermes can answer." For API-key providers we still verify
-            // the matching env var is present.
-            const OAUTH_PROVIDERS = new Set(["openai-codex", "nous"]);
+            // credentials live in Hermes' auth pool (~/.hermes/auth.json).
+            // We check that file first: if the provider has a credential
+            // there (oauth OR api-key entry), we trust it. Env-key check
+            // is a fallback for installs that never registered with
+            // `hermes auth add` but exported the variable directly.
+            const OAUTH_PROVIDERS = new Set([
+              "openai-codex",
+              "nous",
+              "anthropic",
+              "xai-oauth",
+              "copilot",
+            ]);
             const PROVIDER_KEY_MAP: Record<string, string> = {
               anthropic: "ANTHROPIC_API_KEY",
               openrouter: "OPENROUTER_API_KEY",
@@ -398,11 +405,30 @@ export default defineConfig({
             const providerKeyName = provider ? PROVIDER_KEY_MAP[provider] ?? null : null;
             const envPath = join(hermesDir, ".env");
             let hasProviderKey = false;
-            if (provider && OAUTH_PROVIDERS.has(provider)) {
-              // OAuth-authed; we don't check env. Hermes' OAuth store is
-              // sufficient and `hermes status` will catch a missing token.
+            // Primary source of truth: Hermes' own auth.json pool. If the
+            // current provider has at least one credential there, Hermes
+            // is wired up — regardless of env-file state.
+            const authJsonPath = join(hermesDir, "auth.json");
+            if (provider && existsSync(authJsonPath)) {
+              try {
+                const authText = readFileSync(authJsonPath, "utf-8");
+                const auth = JSON.parse(authText);
+                const pool = auth?.credential_pool ?? {};
+                const creds = Array.isArray(pool[provider]) ? pool[provider] : [];
+                if (creds.length > 0) {
+                  hasProviderKey = true;
+                }
+              } catch {
+                /* malformed auth.json — fall through to env check */
+              }
+            }
+            if (!hasProviderKey && provider && OAUTH_PROVIDERS.has(provider)) {
+              // OAuth-style provider without an auth.json record yet — trust
+              // config.yaml's provider declaration. `hermes status` will surface
+              // any real auth gap when chat is attempted.
               hasProviderKey = true;
-            } else if (providerKeyName && existsSync(envPath)) {
+            }
+            if (!hasProviderKey && providerKeyName && existsSync(envPath)) {
               try {
                 const envText = readFileSync(envPath, "utf-8");
                 const re = new RegExp(`^\\s*${providerKeyName}\\s*=\\s*[^\\s#]`, "m");
@@ -521,7 +547,12 @@ export default defineConfig({
           // POST /__hermes_chat — shells out to `hermes chat -Q -q "<prompt>"`
           // (single-query mode with quiet/programmatic output) and streams
           // the response back to the dashboard as SSE.
-          // Loopback + token gated. Body: { prompt: "<user message>" }.
+          // Loopback + token gated. Body: { prompt, sessionId?, personaId? }.
+          // When personaId is set, the matching ~/.hermes/pantheon/personas/<id>.yaml
+          // is loaded and its model + skills + tools are pushed as CLI flags,
+          // and its system_prompt is prepended to the query. This is how
+          // "Activate persona" in the Pantheon UI swaps the underlying LLM
+          // and character without forking conversation state.
           // The prompt is passed as a single argv string — argv doesn't
           // get shell-interpreted, so a malicious prompt can't smuggle
           // shell commands. Browser disconnect kills the child.
@@ -540,7 +571,7 @@ export default defineConfig({
             }
             let body = "";
             for await (const chunk of req as any) body += chunk;
-            let payload: { prompt?: string; sessionId?: string };
+            let payload: { prompt?: string; sessionId?: string; personaId?: string };
             try {
               payload = JSON.parse(body || "{}");
             } catch {
@@ -563,6 +594,52 @@ export default defineConfig({
               res.statusCode = 400;
               res.end(JSON.stringify({ error: "invalid sessionId" }));
               return;
+            }
+            // Optional personaId activates a Pantheon persona: load the YAML
+            // from ~/.hermes/pantheon/personas/<id>.yaml, then override Hermes'
+            // model, skills, tools, and inject system_prompt into the query.
+            // Strict regex keeps the id filesystem-safe (no path traversal).
+            const personaId = payload.personaId?.trim() ?? "";
+            if (personaId && !/^[a-z0-9_-]{1,32}$/.test(personaId)) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: "invalid personaId" }));
+              return;
+            }
+            let persona:
+              | {
+                  id?: string;
+                  name?: string;
+                  model?: { provider?: string; name?: string };
+                  behavior?: { system_prompt?: string };
+                  skills?: string[];
+                  tools?: string[];
+                }
+              | null = null;
+            if (personaId) {
+              const personaPath = join(
+                homedir(),
+                ".hermes",
+                "pantheon",
+                "personas",
+                `${personaId}.yaml`,
+              );
+              if (!existsSync(personaPath)) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "persona not found" }));
+                return;
+              }
+              try {
+                const yaml = await import("js-yaml");
+                persona = yaml.load(readFileSync(personaPath, "utf-8")) as any;
+              } catch (e: any) {
+                res.statusCode = 500;
+                res.end(
+                  JSON.stringify({
+                    error: `persona load failed: ${e?.message ?? "unknown"}`,
+                  }),
+                );
+                return;
+              }
             }
 
             res.setHeader("Content-Type", "text/event-stream");
@@ -628,10 +705,42 @@ export default defineConfig({
             // suppress banner/spinner/tool-preview noise so only the model's
             // final reply lands in the SSE stream. (The old `-z` shortcut
             // from earlier Hermes builds doesn't exist in this version.)
+            // Persona overrides — when a Pantheon persona is active, swap
+            // Hermes' default model and (optionally) constrain skills/tools,
+            // then prepend the persona's system_prompt to the user's query.
+            // Hermes has no runtime --system flag, so we inject the system
+            // prompt as a SYSTEM/USER preamble inside the single -q argv.
+            let effectivePrompt = prompt;
+            if (persona?.behavior?.system_prompt) {
+              const sys = persona.behavior.system_prompt.trim();
+              if (sys) {
+                effectivePrompt = `SYSTEM (${persona.name ?? persona.id ?? "persona"}): ${sys}\n\nUSER: ${prompt}`;
+              }
+            }
             const args = useSourceEntrypoint
-              ? [hermesMain, "chat", "-Q", "-q", prompt]
-              : ["chat", "-Q", "-q", prompt];
+              ? [hermesMain, "chat", "-Q", "-q", effectivePrompt]
+              : ["chat", "-Q", "-q", effectivePrompt];
             if (sessionId) args.push("--resume", sessionId);
+            if (persona) {
+              // Hermes wants --provider and -m as SEPARATE flags. The combined
+              // "provider/model" form makes it route the model name to the
+              // current default provider's API — yielding 404s like
+              // "model: xai-oauth/grok-4.20" hitting Anthropic. Split them.
+              const provider = persona.model?.provider?.trim();
+              const modelName = persona.model?.name?.trim();
+              if (provider) args.push("--provider", provider);
+              if (modelName) args.push("-m", modelName);
+              if (Array.isArray(persona.skills) && persona.skills.length > 0) {
+                args.push("-s", persona.skills.filter(Boolean).join(","));
+              }
+              if (Array.isArray(persona.tools) && persona.tools.length > 0) {
+                // Hermes will print "Unknown toolsets: …" for names that
+                // don't match its registry (e.g. "mcp"); that's a warning,
+                // not fatal — we still pass the list so any recognized
+                // names take effect.
+                args.push("-t", persona.tools.filter(Boolean).join(","));
+              }
+            }
             // Strip any inherited PYTHONPATH/PYTHONHOME so the venv's own
             // site-packages resolution wins. Inherited values from a parent
             // shell can shadow Hermes' bundled deps and cause silent imports

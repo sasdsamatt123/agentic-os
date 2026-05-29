@@ -280,8 +280,8 @@ async function cmdAutoFire(chatId: number) {
   await sendMessage(chatId, "🚀 Auto-fire başlatılıyor...");
   try {
     const out = execSync(
-      `cd /Users/macpro/code/claude-os && /Users/macpro/.bun/bin/bun run scripts/argus-engage.ts --batch 2>&1`,
-      { encoding: "utf-8", timeout: 60_000 },
+      `bun run scripts/argus-engage.ts --batch 2>&1`,
+      { encoding: "utf-8", cwd: process.cwd(), timeout: 60_000 },
     );
     const tail = out.split("\n").slice(-15).join("\n");
     await sendMessage(chatId, `\`\`\`\n${tail}\n\`\`\``);

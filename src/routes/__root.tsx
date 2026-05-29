@@ -14,6 +14,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 // Dark mode only — no theme toggle. The html element has class="dark" permanently.
 import { Bell } from "lucide-react";
 import { HermesStatusPill } from "@/components/hermes-status-pill";
+import { SectionOverlay } from "@/components/section-overlay";
 
 function NotFoundComponent() {
   return (
@@ -161,6 +162,7 @@ function RootComponent() {
             <Outlet />
           </main>
         </div>
+        <SectionOverlay />
       </div>
     </QueryClientProvider>
   );
