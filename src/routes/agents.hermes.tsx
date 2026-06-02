@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { HermesDocumentsGallery } from "@/components/hermes-documents-gallery";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -3360,6 +3361,7 @@ function HermesStatsSection() {
           paired with the Obsidian bridge inside HermesMemorySection. */}
       <HermesMemorySection />
       <HermesLiveSkills />
+      <HermesDocumentsGallery />
       <HermesCliCheatsheet />
     </>
   );

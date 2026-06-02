@@ -9,9 +9,13 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
+  createReadStream,
+  lstatSync,
+  realpathSync,
+  renameSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Pantheon — the 10 canonical persona recipes. Schema co-designed with
@@ -266,6 +270,1056 @@ export default defineConfig({
       {
         name: "claude-os-live-data",
         configureServer(server) {
+
+          // ── V2.3 Documents Gallery + Mission Control (ported from
+          //    Jack Roberts' ClaudeOS [Hermes] V2.3) ──
+          // Mission state lives at ~/.hermes/missions.json as a single
+          // JSON document: { active: <missionId | null>, missions: { <id>: Mission } }.
+          // V1 is file-backed (single user, single machine, fast to
+          // demo). V2 will migrate to the kanban DB so each mission is
+          // a board and each mini-goal is a task — same shape, more
+          // primitives. Keep the JSON shape stable so the migration is
+          // a write-once shim.
+
+          const MISSIONS_FILE = join(homedir(), ".hermes", "missions.json");
+
+          function readMissions(): {
+            active: string | null;
+            missions: Record<string, any>;
+          } {
+            try {
+              if (!existsSync(MISSIONS_FILE)) {
+                return { active: null, missions: {} };
+              }
+              return JSON.parse(readFileSync(MISSIONS_FILE, "utf-8"));
+            } catch {
+              return { active: null, missions: {} };
+            }
+          }
+
+          function writeMissions(data: {
+            active: string | null;
+            missions: Record<string, any>;
+          }): void {
+            const dir = join(homedir(), ".hermes");
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+            writeFileSync(MISSIONS_FILE, JSON.stringify(data, null, 2), {
+              mode: 0o644,
+            });
+          }
+
+          // GET /__hermes_missions — returns the active mission with mini-goals,
+          // or null if none. Public-style read endpoint (loopback only).
+          server.middlewares.use("/__hermes_missions", (req, res, next) => {
+            // Only intercept the exact path, not sub-routes (optimize, create, tick)
+            if (
+              req.method !== "GET" ||
+              (req.url ?? "").split("?")[0] !== "/"
+            )
+              return next();
+            if (!isLoopback(req)) {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ error: "loopback only" }));
+              return;
+            }
+            const data = readMissions();
+            const mission = data.active ? data.missions[data.active] : null;
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("Cache-Control", "no-store");
+            res.end(JSON.stringify({ mission }));
+          });
+
+          // POST /__hermes_missions/optimize — shells `hermes chat` with the
+          // optimize-mission skill instructions prepended so the model
+          // decomposes raw text into a structured mission JSON.
+          // Body: { input: "<rough mission text>" } → 200 { mission: {...} }
+          server.middlewares.use(
+            "/__hermes_missions/optimize",
+            async (req, res, next) => {
+              if (req.method !== "POST") return next();
+              if (!isLoopback(req)) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: "loopback only" }));
+                return;
+              }
+              const token = req.headers["x-claude-os-token"];
+              if (token !== REFRESH_TOKEN) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: "invalid token" }));
+                return;
+              }
+              let body = "";
+              for await (const chunk of req as any) body += chunk;
+              let payload: { input?: string };
+              try {
+                payload = JSON.parse(body || "{}");
+              } catch {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "invalid json" }));
+                return;
+              }
+              const input = (payload.input ?? "").trim();
+              if (!input || input.length > 4000) {
+                res.statusCode = 400;
+                res.end(
+                  JSON.stringify({ error: "input empty or too long (max 4000)" }),
+                );
+                return;
+              }
+
+              const skillPath = join(
+                homedir(),
+                ".hermes",
+                "skills",
+                "productivity",
+                "optimize-mission",
+                "SKILL.md",
+              );
+              if (!existsSync(skillPath)) {
+                res.statusCode = 500;
+                res.end(
+                  JSON.stringify({
+                    error: "optimize-mission skill not installed",
+                  }),
+                );
+                return;
+              }
+              const skillInstructions = readFileSync(skillPath, "utf-8");
+              const prompt = `${skillInstructions}\n\n---\n\nUSER INPUT:\n${input}\n\nReturn ONLY the JSON object. No prose. No markdown fence. Start the response with { and end with }.`;
+
+              // Resolve Hermes binary, mirroring the /__hermes_chat pattern.
+              const home = homedir();
+              const hermesRoot = join(home, ".hermes", "hermes-agent");
+              const hermesPython = join(hermesRoot, "venv", "bin", "python");
+              const hermesMain = join(hermesRoot, "hermes_cli", "main.py");
+              const useSourceEntrypoint =
+                existsSync(hermesPython) && existsSync(hermesMain);
+              const binCandidates = [
+                join(home, ".local", "bin", "hermes"),
+                "/opt/homebrew/bin/hermes",
+                "/usr/local/bin/hermes",
+              ];
+              const binPath = useSourceEntrypoint
+                ? hermesPython
+                : binCandidates.find((p) => existsSync(p));
+              if (!binPath) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: "hermes binary not found" }));
+                return;
+              }
+              const args = useSourceEntrypoint
+                ? [hermesMain, "chat", "-Q", "-q", prompt]
+                : ["chat", "-Q", "-q", prompt];
+
+              const hermesEnv = { ...process.env };
+              delete hermesEnv.PYTHONPATH;
+              delete hermesEnv.PYTHONHOME;
+              const child = spawn(binPath, args, {
+                cwd: home,
+                env: {
+                  ...hermesEnv,
+                  PYTHONUNBUFFERED: "1",
+                  TERM: "xterm-256color",
+                  COLUMNS: "200",
+                  LINES: "60",
+                },
+              });
+
+              let stdout = "";
+              let stderr = "";
+              const timeout = setTimeout(() => {
+                if (!child.killed) child.kill("SIGTERM");
+              }, 180_000); // 3 min budget for the model call
+
+              child.stdout.on("data", (b: Buffer) => {
+                stdout += b.toString("utf-8");
+              });
+              child.stderr.on("data", (b: Buffer) => {
+                stderr += b.toString("utf-8");
+              });
+              child.on("close", (code) => {
+                clearTimeout(timeout);
+                // Extract JSON from stdout — model sometimes wraps with prose
+                // despite instructions, so we find the first { and matching }
+                let jsonStr = stdout.trim();
+                const firstBrace = jsonStr.indexOf("{");
+                const lastBrace = jsonStr.lastIndexOf("}");
+                if (firstBrace !== -1 && lastBrace > firstBrace) {
+                  jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
+                }
+                try {
+                  const mission = JSON.parse(jsonStr);
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(JSON.stringify({ mission }));
+                } catch (e) {
+                  res.statusCode = 502;
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(
+                    JSON.stringify({
+                      error: "Failed to parse JSON from Hermes",
+                      raw: stdout.slice(0, 2000),
+                      stderr: stderr.slice(0, 500),
+                      code,
+                    }),
+                  );
+                }
+              });
+              child.on("error", (err) => {
+                clearTimeout(timeout);
+                res.statusCode = 500;
+                res.end(
+                  JSON.stringify({ error: String(err.message || err) }),
+                );
+              });
+            },
+          );
+
+          // POST /__hermes_missions/create — persist a mission as the active
+          // mission. Body: the structured mission JSON returned by /optimize
+          // (title, deadline_days, binary_outcome, mini_goals[]).
+          // No token required — loopback-only is the security boundary, so
+          // Hermes (also running locally) can POST via plain curl without
+          // having to read the token file. Frontend can still pass a token
+          // but it's ignored.
+          server.middlewares.use(
+            "/__hermes_missions/create",
+            async (req, res, next) => {
+              if (req.method !== "POST") return next();
+              if (!isLoopback(req)) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: "loopback only" }));
+                return;
+              }
+              let body = "";
+              for await (const chunk of req as any) body += chunk;
+              let payload: any;
+              try {
+                payload = JSON.parse(body || "{}");
+              } catch {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "invalid json" }));
+                return;
+              }
+              if (
+                !payload.title ||
+                !Array.isArray(payload.mini_goals) ||
+                payload.mini_goals.length === 0
+              ) {
+                res.statusCode = 400;
+                res.end(
+                  JSON.stringify({
+                    error: "missing title or mini_goals",
+                  }),
+                );
+                return;
+              }
+              if (payload.mini_goals.length > 10) {
+                res.statusCode = 400;
+                res.end(
+                  JSON.stringify({
+                    error: "too many mini_goals (hard cap: 10)",
+                  }),
+                );
+                return;
+              }
+              // Require full_prompt on every mini-goal so the briefing
+              // drawer always has a real authored brief (written using
+              // discovery state) rather than the synthesized fallback.
+              // Reject the whole payload if any are missing or anemic.
+              // Tier the minimum by actor:
+              //   - hermes  ≥ 200 chars  (the /goal prompt — full briefing)
+              //   - human   ≥ 200 chars  (8-section briefing, 120–200 words)
+              // Both tiers land at the same floor so Hermes has to do the
+              // work for both; mis-tagging an anemic prompt as "human" to
+              // dodge the check doesn't save anything.
+              for (let i = 0; i < payload.mini_goals.length; i++) {
+                const g = payload.mini_goals[i];
+                const fp = typeof g?.full_prompt === "string"
+                  ? g.full_prompt.trim()
+                  : "";
+                if (!fp || fp.length < 200) {
+                  res.statusCode = 400;
+                  res.end(
+                    JSON.stringify({
+                      error: `mini_goals[${i}].full_prompt missing or too short (need ≥200 chars of authored briefing — 80+ words for hermes /goal prompts, 120–200 words for human 8-section briefings)`,
+                    }),
+                  );
+                  return;
+                }
+              }
+              const id = `mission-${Date.now()}`;
+              const days = Number(payload.deadline_days) || 28;
+              const deadline = new Date(Date.now() + days * 86_400_000);
+              const mission = {
+                id,
+                title: String(payload.title).slice(0, 200),
+                binary_outcome: String(payload.binary_outcome ?? "").slice(
+                  0,
+                  500,
+                ),
+                deadline_days: days,
+                deadline_iso: deadline.toISOString(),
+                created_at: new Date().toISOString(),
+                mini_goals: payload.mini_goals.map((g: any, i: number) => ({
+                  id: `g-${id}-${i + 1}`,
+                  num: Number(g.num) || i + 1,
+                  title: String(g.title ?? "").slice(0, 200),
+                  actor: g.actor === "human" ? "human" : "hermes",
+                  done_when: String(g.done_when ?? "").slice(0, 500),
+                  full_prompt: String(g.full_prompt ?? "").slice(0, 4000),
+                  estimate: String(g.estimate ?? "").slice(0, 80),
+                  status: "queued",
+                })),
+                image_path: null,
+              };
+              const data = readMissions();
+              data.missions[id] = mission;
+              data.active = id;
+              writeMissions(data);
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ mission }));
+            },
+          );
+
+          // POST /__hermes_missions/tick — toggle a mini-goal's done status.
+          // Body: { goalId: "g-<missionId>-<num>" }
+          server.middlewares.use(
+            "/__hermes_missions/tick",
+            async (req, res, next) => {
+              if (req.method !== "POST") return next();
+              if (!isLoopback(req)) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: "loopback only" }));
+                return;
+              }
+              let body = "";
+              for await (const chunk of req as any) body += chunk;
+              let payload: { goalId?: string };
+              try {
+                payload = JSON.parse(body || "{}");
+              } catch {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "invalid json" }));
+                return;
+              }
+              const goalId = String(payload.goalId ?? "");
+              if (!goalId) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "goalId required" }));
+                return;
+              }
+              const data = readMissions();
+              if (!data.active || !data.missions[data.active]) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: "no active mission" }));
+                return;
+              }
+              const mission = data.missions[data.active];
+              const goal = mission.mini_goals.find(
+                (g: any) => g.id === goalId,
+              );
+              if (!goal) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: "goal not found" }));
+                return;
+              }
+              goal.status = goal.status === "done" ? "queued" : "done";
+              writeMissions(data);
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ mission }));
+            },
+          );
+
+          // POST /__hermes_missions/clear — drop the active mission entirely.
+          // No token required — loopback-only is the security boundary.
+          server.middlewares.use(
+            "/__hermes_missions/clear",
+            async (req, res, next) => {
+              if (req.method !== "POST") return next();
+              if (!isLoopback(req)) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: "loopback only" }));
+                return;
+              }
+              const data = readMissions();
+              data.active = null;
+              writeMissions(data);
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: true }));
+            },
+          );
+
+
+          // ───────────────────────────────────────────────────────────────
+          // DOCUMENTS GALLERY — three middlewares for the Hermes-page
+          // "documents" surface. Source folder: ~/Documents/Hermes/
+          // (auto-created on first hit so a fresh operator gets an empty
+          // gallery instead of an error). Drag/save anything here and
+          // it appears on the dashboard within 5 seconds (the gallery
+          // polls). Click-to-delete removes from disk.
+          //
+          //   GET    /__hermes_documents             → list metadata
+          //   GET    /__hermes_documents/file?name=  → stream one file
+          //   DELETE /__hermes_documents?name=       → delete one file
+          //
+          // All three: loopback-only, path-traversal guarded
+          // (filename must be a bare basename — no slashes, no `..`).
+          // ───────────────────────────────────────────────────────────────
+          const DOCUMENTS_DIR = join(homedir(), "Documents", "Hermes");
+          // Soft-delete target. Files moved here on DELETE; the restore
+          // endpoint moves them back. The dotfile prefix means listing
+          // already skips this dir, so it doesn't show in the gallery.
+          const TRASH_DIR = join(DOCUMENTS_DIR, ".trash");
+
+          function ensureDocumentsDir() {
+            try {
+              if (!existsSync(DOCUMENTS_DIR)) {
+                mkdirSync(DOCUMENTS_DIR, { recursive: true });
+              }
+            } catch {
+              /* ignore — listing will return empty */
+            }
+          }
+
+          function ensureTrashDir() {
+            try {
+              if (!existsSync(TRASH_DIR)) {
+                mkdirSync(TRASH_DIR, { recursive: true });
+              }
+            } catch {
+              /* ignore — soft-delete will fall back to hard-delete */
+            }
+          }
+
+          // Trash IDs encode the original filename so restore can move
+          // the file back without needing a separate manifest. Format:
+          // {timestamp}__{originalname}. The timestamp prefix makes them
+          // unique even across rapid same-name deletions.
+          function safeTrashId(id: string | null): string | null {
+            if (!id) return null;
+            if (id.length === 0 || id.length > 320) return null;
+            if (id.includes("/") || id.includes("\\")) return null;
+            if (id.includes("..")) return null;
+            if (!id.includes("__")) return null;
+            return id;
+          }
+
+          function originalNameFromTrashId(id: string): string | null {
+            // id = "{ms}__{originalname}". Split on the first __ only —
+            // the original filename can contain __ in rare cases.
+            const idx = id.indexOf("__");
+            if (idx < 0) return null;
+            const name = id.slice(idx + 2);
+            return safeDocName(name);
+          }
+
+          function safeDocName(name: string | null): string | null {
+            if (!name) return null;
+            // Reject path-traversal, absolute paths, hidden files,
+            // anything that contains a separator. Filename must be a
+            // bare basename of reasonable length.
+            if (name.length === 0 || name.length > 255) return null;
+            if (name.includes("/") || name.includes("\\")) return null;
+            if (name.includes("..")) return null;
+            if (name.startsWith(".")) return null;
+            return name;
+          }
+
+          // Symlink-safe path resolver. safeDocName() blocks string-form
+          // path traversal but does NOT stop symlinks — an operator (or
+          // attacker) could drop ~/Documents/Hermes/secret.html as a
+          // symlink to ~/.ssh/id_rsa, and renameSync() would silently
+          // move the private key into .trash/, or readFileSync() would
+          // stream it back over the loopback endpoint. realpathSync()
+          // follows every symlink to the true on-disk path; if that
+          // path doesn't live inside DOCUMENTS_DIR or TRASH_DIR, we
+          // refuse the operation. Returns the safe absolute path or
+          // null if it would escape.
+          let DOCUMENTS_DIR_REAL: string | null = null;
+          let TRASH_DIR_REAL: string | null = null;
+          function resolveInsideDocs(
+            rawPath: string,
+            allowTrash = false,
+          ): string | null {
+            try {
+              // Cache the real root paths after first successful resolve
+              // (cheap), so we don't realpath() the same dirs every call.
+              if (DOCUMENTS_DIR_REAL === null) {
+                DOCUMENTS_DIR_REAL = realpathSync(DOCUMENTS_DIR);
+              }
+              if (allowTrash && TRASH_DIR_REAL === null && existsSync(TRASH_DIR)) {
+                TRASH_DIR_REAL = realpathSync(TRASH_DIR);
+              }
+              const real = realpathSync(rawPath);
+              const docPrefix = DOCUMENTS_DIR_REAL + sep;
+              if (real === DOCUMENTS_DIR_REAL || real.startsWith(docPrefix)) {
+                return real;
+              }
+              if (allowTrash && TRASH_DIR_REAL) {
+                const trashPrefix = TRASH_DIR_REAL + sep;
+                if (real === TRASH_DIR_REAL || real.startsWith(trashPrefix)) {
+                  return real;
+                }
+              }
+              return null;
+            } catch {
+              // ENOENT / ELOOP / permission errors all collapse to "no".
+              return null;
+            }
+          }
+
+          function classifyDoc(ext: string): string {
+            const e = ext.toLowerCase().replace(/^\./, "");
+            if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"].includes(e)) return "image";
+            if (["pdf"].includes(e)) return "pdf";
+            if (["html", "htm"].includes(e)) return "html";
+            if (["md", "markdown", "mdx"].includes(e)) return "markdown";
+            if (["txt", "log"].includes(e)) return "text";
+            if (["json", "yaml", "yml", "toml", "csv", "tsv"].includes(e)) return "data";
+            if (["mp4", "mov", "webm", "mkv", "avi"].includes(e)) return "video";
+            if (["mp3", "wav", "ogg", "m4a", "flac"].includes(e)) return "audio";
+            if (["zip", "tar", "gz", "tgz", "7z", "rar"].includes(e)) return "archive";
+            if (["ts", "tsx", "js", "jsx", "py", "rb", "go", "rs", "java", "c", "cpp", "sh"].includes(e)) return "code";
+            return "other";
+          }
+
+          // Read at most this many bytes per file when parsing the
+          // title + description metadata. Big enough to catch frontmatter
+          // and HTML <head>, small enough that a folder full of multi-MB
+          // PDFs still lists in milliseconds.
+          const META_READ_CAP = 4096;
+
+          // Per-type metadata parser. Returns { title, description } —
+          // either may be null. Hermes is asked (via the onboarding prompt)
+          // to embed these explicitly so we get clean strings; the
+          // fallbacks here mean even files without explicit metadata still
+          // render with something better than the raw filename.
+          function parseDocMeta(
+            path: string,
+            type: string,
+          ): { title: string | null; description: string | null } {
+            // Skip types that can't be cheaply parsed for text metadata.
+            if (["image", "pdf", "video", "audio", "archive"].includes(type)) {
+              return { title: null, description: null };
+            }
+            let head: string;
+            try {
+              const buf = readFileSync(path);
+              head = buf.subarray(0, META_READ_CAP).toString("utf8");
+            } catch {
+              return { title: null, description: null };
+            }
+
+            // Trim a string to N words, with an ellipsis if truncated.
+            // Kept loose — the operator-side word caps are soft.
+            const trimWords = (s: string | null, n: number): string | null => {
+              if (!s) return null;
+              const cleaned = s.replace(/\s+/g, " ").trim();
+              if (!cleaned) return null;
+              const parts = cleaned.split(" ");
+              if (parts.length <= n) return cleaned;
+              return parts.slice(0, n).join(" ") + "…";
+            };
+
+            let title: string | null = null;
+            let description: string | null = null;
+
+            if (type === "html") {
+              // Explicit hermes-* meta tags win — that's what Hermes is
+              // asked to emit. Fall back to <title> and the standard
+              // <meta name="description"> so non-Hermes HTML still works.
+              const metaTitle = head.match(
+                /<meta\s+name=["']hermes-title["']\s+content=["']([^"']+)["']/i,
+              );
+              const metaDesc = head.match(
+                /<meta\s+name=["']hermes-description["']\s+content=["']([^"']+)["']/i,
+              );
+              const fallbackTitle = head.match(/<title>([^<]+)<\/title>/i);
+              const fallbackDesc = head.match(
+                /<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i,
+              );
+              title = metaTitle?.[1] ?? fallbackTitle?.[1] ?? null;
+              description = metaDesc?.[1] ?? fallbackDesc?.[1] ?? null;
+            } else if (type === "markdown") {
+              // YAML frontmatter first, then fall back to first # heading
+              // + first paragraph.
+              const fm = head.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+              if (fm) {
+                const t = fm[1].match(/^title:\s*(.+)$/m);
+                const d = fm[1].match(/^description:\s*(.+)$/m);
+                if (t) title = t[1].replace(/^["']|["']$/g, "").trim();
+                if (d) description = d[1].replace(/^["']|["']$/g, "").trim();
+              }
+              if (!title) {
+                const h1 = head.match(/^#\s+(.+?)\s*$/m);
+                if (h1) title = h1[1];
+              }
+              if (!description) {
+                // Strip frontmatter + heading, then first paragraph.
+                const body = head
+                  .replace(/^---[\s\S]*?\n---\s*\n/, "")
+                  .replace(/^#.+$/m, "")
+                  .trim();
+                const para = body.split(/\n\s*\n/).find((p) => p.trim());
+                if (para) description = para.replace(/[*_`]/g, "").trim();
+              }
+            } else if (type === "data") {
+              // JSON: look for top-level title/description, or _hermes.{title,description}.
+              if (path.endsWith(".json")) {
+                try {
+                  const parsed = JSON.parse(head);
+                  title =
+                    parsed?._hermes?.title ??
+                    parsed?.title ??
+                    parsed?.name ??
+                    null;
+                  description =
+                    parsed?._hermes?.description ??
+                    parsed?.description ??
+                    parsed?.summary ??
+                    null;
+                  if (typeof title !== "string") title = null;
+                  if (typeof description !== "string") description = null;
+                } catch {
+                  // Truncated JSON inside the 4KB window — try a permissive
+                  // regex on the head instead.
+                  const t = head.match(/"title"\s*:\s*"([^"]+)"/);
+                  const d = head.match(/"description"\s*:\s*"([^"]+)"/);
+                  title = t?.[1] ?? null;
+                  description = d?.[1] ?? null;
+                }
+              } else {
+                // YAML / TOML / CSV — look for a leading comment pair.
+                const t = head.match(/^[#\s]*title:\s*(.+)$/im);
+                const d = head.match(/^[#\s]*description:\s*(.+)$/im);
+                if (t) title = t[1].trim();
+                if (d) description = d[1].trim();
+              }
+            } else if (type === "text") {
+              // Convention: first non-empty line = title, second = description,
+              // optionally prefixed with a leading "# " or similar.
+              const lines = head
+                .split(/\r?\n/)
+                .map((l) => l.replace(/^[#\s>*—\-=]+/, "").trim())
+                .filter((l) => l.length > 0);
+              if (lines[0]) title = lines[0];
+              if (lines[1]) description = lines[1];
+            } else if (type === "code") {
+              // First leading-comment line as title, second as description.
+              const lines = head
+                .split(/\r?\n/)
+                .map((l) =>
+                  l.replace(/^\s*(\/\/|#|--|\/\*|\*)\s?/, "").trim(),
+                )
+                .filter((l) => l.length > 0 && !l.startsWith("*/"));
+              if (lines[0]) title = lines[0];
+              if (lines[1]) description = lines[1];
+            }
+
+            // Soft caps to keep card layouts tidy. Hermes is asked for
+            // ≤5 / ≤15 words; we enforce slightly looser limits server-side
+            // so legacy or hand-edited files don't get awkwardly chopped.
+            return {
+              title: trimWords(title, 8),
+              description: trimWords(description, 22),
+            };
+          }
+
+          // Cache wrapper around parseDocMeta. Keyed on the absolute
+          // path; cache hits when mtimeMs AND size both match. The
+          // gallery polls every 5s, so without this we'd readFileSync
+          // every file on every poll (200 files = 200 syncs / 5s,
+          // blocks HMR + the rest of the dev server). Per-process map
+          // so it dies with vite reload.
+          interface MetaCacheEntry {
+            mtimeMs: number;
+            size: number;
+            meta: { title: string | null; description: string | null };
+          }
+          const docMetaCache = new Map<string, MetaCacheEntry>();
+          function cachedParseDocMeta(
+            path: string,
+            type: string,
+            mtimeMs: number,
+            size: number,
+          ): { title: string | null; description: string | null } {
+            const cached = docMetaCache.get(path);
+            if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
+              return cached.meta;
+            }
+            const meta = parseDocMeta(path, type);
+            docMetaCache.set(path, { mtimeMs, size, meta });
+            // Soft cap on cache size to bound memory if the operator
+            // is churning many files. Drop oldest insertion when we
+            // exceed 5000 entries — generous given the 1000-file
+            // enumeration cap.
+            if (docMetaCache.size > 5000) {
+              const firstKey = docMetaCache.keys().next().value;
+              if (firstKey) docMetaCache.delete(firstKey);
+            }
+            return meta;
+          }
+
+          server.middlewares.use("/__hermes_documents", (req, res, next) => {
+            if (!isLoopback(req)) {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ error: "loopback only" }));
+              return;
+            }
+            const url = new URL(req.url || "", "http://localhost");
+            // GET /__hermes_documents/file?name=… → stream one file with
+            // a sensible Content-Type so the preview pane can render it
+            // (img tag for images, iframe for html/pdf, fetch+text for
+            // markdown/text/code).
+            if (req.method === "GET" && url.pathname.endsWith("/file")) {
+              const name = safeDocName(url.searchParams.get("name"));
+              if (!name) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "invalid name" }));
+                return;
+              }
+              const rawPath = join(DOCUMENTS_DIR, name);
+              if (!existsSync(rawPath)) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: "not found" }));
+                return;
+              }
+              // Symlink-escape guard: refuse to serve anything whose
+              // real on-disk path escapes ~/Documents/Hermes/. Stops
+              // an attacker who can plant a symlink in the folder from
+              // exfiltrating ~/.ssh/id_rsa or other arbitrary files.
+              const safePath = resolveInsideDocs(rawPath);
+              if (!safePath) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: "path escapes documents folder" }));
+                return;
+              }
+              const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
+              const mimeMap: Record<string, string> = {
+                png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+                gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
+                bmp: "image/bmp", ico: "image/x-icon", avif: "image/avif",
+                pdf: "application/pdf",
+                html: "text/html; charset=utf-8", htm: "text/html; charset=utf-8",
+                md: "text/markdown; charset=utf-8", markdown: "text/markdown; charset=utf-8",
+                txt: "text/plain; charset=utf-8", log: "text/plain; charset=utf-8",
+                json: "application/json; charset=utf-8",
+                yaml: "text/yaml; charset=utf-8", yml: "text/yaml; charset=utf-8",
+                csv: "text/csv; charset=utf-8",
+                mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm",
+                mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg",
+              };
+              const mime = mimeMap[ext] ?? "application/octet-stream";
+              try {
+                const st = statSync(safePath);
+                res.setHeader("Content-Type", mime);
+                res.setHeader("Cache-Control", "no-store");
+                res.setHeader("Content-Length", String(st.size));
+                // Stream instead of slurping — a 2GB video would
+                // otherwise pull the whole file into memory before
+                // the first byte ships.
+                const stream = createReadStream(safePath);
+                stream.on("error", (err: any) => {
+                  if (!res.headersSent) {
+                    res.statusCode = 500;
+                    res.end(JSON.stringify({ error: err?.message ?? "stream failed" }));
+                  } else {
+                    res.destroy(err);
+                  }
+                });
+                stream.pipe(res);
+              } catch (err: any) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: err?.message ?? "read failed" }));
+              }
+              return;
+            }
+            // DELETE /__hermes_documents?name=… → soft-delete (move to
+            // .trash/). Returns a trashId the operator can use within
+            // the undo window to restore the file. Files in .trash/
+            // are not auto-purged — operator can clean manually from
+            // Finder. This means "delete" is genuinely reversible
+            // forever, not just within the 8-second toast window.
+            // Skip when the path is one of the sub-routes — those have
+            // their own DELETE handlers below.
+            if (req.method === "DELETE" && !url.pathname.endsWith("/trash")) {
+              const name = safeDocName(url.searchParams.get("name"));
+              if (!name) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "invalid name" }));
+                return;
+              }
+              const path = join(DOCUMENTS_DIR, name);
+              try {
+                if (!existsSync(path)) {
+                  res.statusCode = 404;
+                  res.end(JSON.stringify({ error: "not found" }));
+                  return;
+                }
+                // Symlink guard — refuse to trash anything whose real
+                // path is outside ~/Documents/Hermes/. Stops a symlink
+                // attack from moving ~/.ssh/id_rsa into .trash/.
+                if (!resolveInsideDocs(path)) {
+                  res.statusCode = 403;
+                  res.end(JSON.stringify({ error: "path escapes documents folder" }));
+                  return;
+                }
+                ensureTrashDir();
+                const trashId = `${Date.now()}__${name}`;
+                renameSync(path, join(TRASH_DIR, trashId));
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ ok: true, trashId }));
+              } catch (err: any) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: err?.message ?? "delete failed" }));
+              }
+              return;
+            }
+            // POST /__hermes_documents/restore?trashId=… → undo a
+            // soft-delete by moving the file back to its original name.
+            // If a file with the original name already exists (operator
+            // recreated it in the meantime), append a numeric suffix
+            // rather than clobbering.
+            if (req.method === "POST" && url.pathname.endsWith("/restore")) {
+              const trashId = safeTrashId(url.searchParams.get("trashId"));
+              if (!trashId) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "invalid trashId" }));
+                return;
+              }
+              const original = originalNameFromTrashId(trashId);
+              if (!original) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: "invalid trashId payload" }));
+                return;
+              }
+              const trashPath = join(TRASH_DIR, trashId);
+              if (!existsSync(trashPath)) {
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: "trash entry not found" }));
+                return;
+              }
+              // Symlink guard — the entry in .trash/ must resolve to a
+              // path actually inside .trash/. Without this, an attacker
+              // could plant a symlink inside .trash/ pointing to e.g.
+              // ~/.zshrc and a restore would happily move it into
+              // ~/Documents/Hermes/.
+              if (!resolveInsideDocs(trashPath, /*allowTrash*/ true)) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: "trash entry escapes folder" }));
+                return;
+              }
+              // Compute a non-clobbering target name. If the original is
+              // taken, append " (restored)", then " (restored 2)", etc.
+              let targetName = original;
+              if (existsSync(join(DOCUMENTS_DIR, targetName))) {
+                const dot = original.lastIndexOf(".");
+                const stem = dot > 0 ? original.slice(0, dot) : original;
+                const ext = dot > 0 ? original.slice(dot) : "";
+                let n = 1;
+                let candidate = `${stem} (restored)${ext}`;
+                while (existsSync(join(DOCUMENTS_DIR, candidate))) {
+                  n += 1;
+                  candidate = `${stem} (restored ${n})${ext}`;
+                }
+                targetName = candidate;
+              }
+              try {
+                renameSync(trashPath, join(DOCUMENTS_DIR, targetName));
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ ok: true, restoredAs: targetName }));
+              } catch (err: any) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: err?.message ?? "restore failed" }));
+              }
+              return;
+            }
+            // GET /__hermes_documents/trash → list everything in the
+            // soft-delete folder so the operator can restore or
+            // permanently delete from a dedicated UI.
+            if (req.method === "GET" && url.pathname.endsWith("/trash")) {
+              const items: Array<{
+                trashId: string;
+                originalName: string;
+                deletedMs: number;
+                sizeBytes: number;
+              }> = [];
+              try {
+                if (existsSync(TRASH_DIR)) {
+                  for (const entry of readdirSync(TRASH_DIR)) {
+                    const original = originalNameFromTrashId(entry);
+                    if (!original) continue;
+                    try {
+                      const st = statSync(join(TRASH_DIR, entry));
+                      if (!st.isFile()) continue;
+                      const tsRaw = entry.split("__")[0];
+                      const ts = Number(tsRaw);
+                      items.push({
+                        trashId: entry,
+                        originalName: original,
+                        deletedMs: Number.isFinite(ts) ? ts : st.mtimeMs,
+                        sizeBytes: st.size,
+                      });
+                    } catch {
+                      /* skip unreadable entry */
+                    }
+                  }
+                }
+              } catch {
+                /* ignore — return empty */
+              }
+              items.sort((a, b) => b.deletedMs - a.deletedMs);
+              res.setHeader("Content-Type", "application/json");
+              res.setHeader("Cache-Control", "no-store");
+              res.end(JSON.stringify({ items }));
+              return;
+            }
+            // DELETE /__hermes_documents/trash?trashId=… → permanently
+            // remove one trashed file. DELETE /__hermes_documents/trash
+            // (no trashId) → empty the entire trash.
+            if (req.method === "DELETE" && url.pathname.endsWith("/trash")) {
+              const trashIdParam = url.searchParams.get("trashId");
+              if (trashIdParam) {
+                const trashId = safeTrashId(trashIdParam);
+                if (!trashId) {
+                  res.statusCode = 400;
+                  res.end(JSON.stringify({ error: "invalid trashId" }));
+                  return;
+                }
+                const p = join(TRASH_DIR, trashId);
+                try {
+                  if (existsSync(p)) {
+                    // Symlink guard — the entry must be inside .trash/,
+                    // not a symlink to ~/.zshrc or similar.
+                    if (!resolveInsideDocs(p, /*allowTrash*/ true)) {
+                      res.statusCode = 403;
+                      res.end(JSON.stringify({ error: "trash entry escapes folder" }));
+                      return;
+                    }
+                    unlinkSync(p);
+                  }
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(JSON.stringify({ ok: true }));
+                } catch (err: any) {
+                  res.statusCode = 500;
+                  res.end(JSON.stringify({ error: err?.message ?? "purge failed" }));
+                }
+                return;
+              }
+              // Empty all — unlink every file inside TRASH_DIR. Each
+              // entry is symlink-checked before unlink so an attacker
+              // can't seed .trash/ with a symlink to a system file and
+              // weaponize "empty trash" into a system deletion.
+              let purged = 0;
+              const errors: string[] = [];
+              try {
+                if (existsSync(TRASH_DIR)) {
+                  for (const entry of readdirSync(TRASH_DIR)) {
+                    const p = join(TRASH_DIR, entry);
+                    try {
+                      // Use lstatSync to inspect the link itself, not
+                      // its target. resolveInsideDocs then verifies the
+                      // resolved path is genuinely inside .trash/.
+                      const lst = lstatSync(p);
+                      if (!lst.isFile() && !lst.isSymbolicLink()) continue;
+                      if (!resolveInsideDocs(p, /*allowTrash*/ true)) {
+                        errors.push(`${entry}: refused (escapes folder)`);
+                        continue;
+                      }
+                      unlinkSync(p);
+                      purged += 1;
+                    } catch (e: any) {
+                      errors.push(`${entry}: ${e?.message ?? "purge failed"}`);
+                    }
+                  }
+                }
+              } catch (e: any) {
+                errors.push(e?.message ?? "could not read trash dir");
+              }
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: errors.length === 0, purged, errors }));
+              return;
+            }
+            // GET /__hermes_documents → list metadata
+            if (req.method !== "GET") return next();
+            ensureDocumentsDir();
+            const items: Array<{
+              name: string;
+              type: string;
+              ext: string;
+              sizeBytes: number;
+              modifiedMs: number;
+              title: string | null;
+              description: string | null;
+            }> = [];
+            // Cap so a runaway folder doesn't hang the dev server's
+            // event loop on the 5s polling cadence. 1000 is well past
+            // any realistic operator's gallery; if it ever trips we
+            // surface a `truncated` flag in the response.
+            const MAX_ENTRIES = 1000;
+            let truncated = false;
+            try {
+              const entries = readdirSync(DOCUMENTS_DIR);
+              for (const name of entries) {
+                if (items.length >= MAX_ENTRIES) {
+                  truncated = true;
+                  break;
+                }
+                if (name.startsWith(".")) continue; // skip .DS_Store etc.
+                try {
+                  const p = join(DOCUMENTS_DIR, name);
+                  // lstatSync inspects the link itself — we want to
+                  // skip symlinks entirely from the listing, never
+                  // mind serving them. If an operator drops a symlink
+                  // it just doesn't appear in the gallery.
+                  const lst = lstatSync(p);
+                  if (lst.isSymbolicLink()) continue;
+                  if (!lst.isFile()) continue;
+                  const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
+                  const type = classifyDoc(ext);
+                  // Cached metadata read — keyed on (path, mtimeMs, size).
+                  // At 200+ files on a 5s poll the uncached cost is
+                  // 200×readFileSync + regex/parse every 5s. With the
+                  // cache the cost drops to a single lstat per file
+                  // unless its mtime or size changed.
+                  const meta = cachedParseDocMeta(p, type, lst.mtimeMs, lst.size);
+                  items.push({
+                    name,
+                    type,
+                    ext,
+                    sizeBytes: lst.size,
+                    modifiedMs: lst.mtimeMs,
+                    title: meta.title,
+                    description: meta.description,
+                  });
+                } catch {
+                  /* skip unreadable entry */
+                }
+              }
+            } catch {
+              /* ignore — return empty list */
+            }
+            // Newest first by default.
+            items.sort((a, b) => b.modifiedMs - a.modifiedMs);
+
+            // Trash count — cheap, lets the frontend conditionally
+            // render the "Trash · N" link without an extra round trip.
+            let trashCount = 0;
+            try {
+              if (existsSync(TRASH_DIR)) {
+                for (const entry of readdirSync(TRASH_DIR)) {
+                  if (originalNameFromTrashId(entry)) trashCount += 1;
+                }
+              }
+            } catch {
+              /* ignore — leave count at 0 */
+            }
+
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("Cache-Control", "no-store");
+            res.end(JSON.stringify({ folder: DOCUMENTS_DIR, items, trashCount, truncated }));
+          });
+
           // GET /__live-data — serves live-data.json fresh from disk on every
           // request.  This replaces the static `import liveData from "…"`
           // pattern so the browser always gets the latest aggregator output

@@ -89,6 +89,7 @@ import * as React from "react";
 import { lazy, Suspense, useEffect, useState, type ComponentType } from "react";
 import { useTimeSaved, totals, formatHours, type Period } from "@/lib/time-saved";
 import { UsagePanel } from "@/components/usage-panel";
+import { HermesMissionControl } from "@/components/hermes-mission-control";
 import { EditablePrice } from "@/components/editable-price";
 import { usePriceOverrides } from "@/hooks/use-price-overrides";
 
@@ -1260,7 +1261,7 @@ export function Home({ forceSetupModal = false }: { forceSetupModal?: boolean } 
                     {dreamGeneratedAt
                       ? `Pattern analysis across 7 days · generated ${new Date(dreamGeneratedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
                       : dreamCount === 0
-                        ? 'Dream runs automatically at 7am daily. Run claude -p "/dream" to trigger it now.'
+                        ? 'Dream runs automatically on your configured cron schedule. Run claude -p "/dream" to trigger it now.'
                         : "Pattern analysis across 7 days"}
                   </div>
                 </div>
@@ -1288,7 +1289,7 @@ export function Home({ forceSetupModal = false }: { forceSetupModal?: boolean } 
                       <CheckCircle2 className="h-8 w-8 text-emerald-300 mx-auto mb-3" />
                       <div className="text-sm text-emerald-100">
                         {noDreamYet
-                          ? "Dream review runs at 7am daily. It will appear here after its first run — or run claude -p \"/dream\" to trigger now."
+                          ? "Dream review runs on your configured cron schedule. It will appear here after its first run — or run claude -p \"/dream\" to trigger now."
                           : "All caught up. Nothing else for tonight."}
                       </div>
                     </div>
@@ -1318,6 +1319,9 @@ export function Home({ forceSetupModal = false }: { forceSetupModal?: boolean } 
             <DreamWinsStrip resolved={(ld?.dream as any)?.resolved ?? []} />
           </div>
         </section>
+
+        {/* ============= MISSION CONTROL — long-term goal planning ============= */}
+        <HermesMissionControl />
 
         {/* ============= SECTION 1 — SKILLS ============= */}
         <section className="mb-14">
@@ -2955,7 +2959,7 @@ function DreamCarousel({
 
   return (
     <div
-      className={`relative rounded-2xl border ${palette.ring} overflow-hidden md:h-[440px] md:flex`}
+      className={`relative rounded-2xl border ${palette.ring} overflow-hidden md:min-h-[440px] md:flex`}
       style={{
         background: "radial-gradient(140% 100% at 0% 50%, #1a0b3a 0%, #0a0418 45%, #050210 100%)",
         boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.04), 0 16px 48px -16px ${palette.glow}`,
