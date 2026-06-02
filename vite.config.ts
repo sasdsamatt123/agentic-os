@@ -3088,15 +3088,22 @@ export default defineConfig({
             try {
               if (existsSync(sessionsDir)) {
                 const files = readdirSync(sessionsDir)
-                  // Real Hermes session JSONs are named
-                  // `session_<timestamp>_<id>.json`. The directory also
-                  // contains `sessions.json` (Hermes' session-index, NOT
-                  // a session) — explicitly exclude it or it shows up as
-                  // a phantom "sessions" entry with all-null fields.
+                  // Two real session formats live here:
+                  //   • session_<timestamp>_<id>.json    (current format)
+                  //   • <timestamp>_<id>.jsonl           (older format)
+                  // Plus noise that must NOT be treated as sessions:
+                  //   • sessions.json                    (the master index)
+                  //   • request_dump_*.json              (per-request error
+                  //       dumps — diagnostic snapshots, not conversations.
+                  //       Previously polluted the visible list with all-
+                  //       null-field rows because they have no
+                  //       session_start / last_updated / messages.)
+                  //   • .DS_Store / .lock / dotfiles
                   .filter(
                     (f) =>
-                      f.endsWith(".json") &&
+                      (f.endsWith(".json") || f.endsWith(".jsonl")) &&
                       f !== "sessions.json" &&
+                      !f.startsWith("request_dump_") &&
                       !f.startsWith("."),
                   )
                   .map((name) => ({
@@ -3104,22 +3111,55 @@ export default defineConfig({
                     mtime: statSync(join(sessionsDir, name)).mtimeMs,
                   }))
                   .sort((a, b) => b.mtime - a.mtime)
-                  .slice(0, 20);
+                  // Cap raised from 20 → 200. The /agents/hermes
+                  // ActivityCard builds a 7-day bar chart from these and
+                  // was silently truncating real activity at 20 items.
+                  // 200 covers ~3 weeks of heavy use comfortably.
+                  .slice(0, 200);
                 for (const f of files) {
                   try {
                     const raw = readFileSync(join(sessionsDir, f.name), "utf-8");
-                    const j = JSON.parse(raw);
-                    const msgs = Array.isArray(j.messages) ? j.messages : [];
-                    const firstUser =
-                      msgs.find((m: any) => m?.role === "user")?.content ?? null;
+                    // JSON: parse normally. JSONL: only first line is the
+                    // session_meta header we care about — peel it off.
+                    const isJsonl = f.name.endsWith(".jsonl");
+                    const j = isJsonl
+                      ? (() => {
+                          const firstLine = raw.split("\n").find((l) => l.trim().length > 0);
+                          if (!firstLine) return null;
+                          try {
+                            return JSON.parse(firstLine);
+                          } catch {
+                            return null;
+                          }
+                        })()
+                      : JSON.parse(raw);
+                    const msgs = Array.isArray(j?.messages) ? j.messages : [];
+                    // First user-typed message preview — handle multimodal
+                    // content arrays gracefully (Hermes stores some
+                    // messages as [{type:"text", text:"..."}] arrays).
+                    const userMsg = msgs.find((m: any) => m?.role === "user");
+                    let firstUser: string | null = null;
+                    if (typeof userMsg?.content === "string") firstUser = userMsg.content;
+                    else if (Array.isArray(userMsg?.content)) {
+                      const textPart = userMsg.content.find((c: any) => c?.type === "text");
+                      if (typeof textPart?.text === "string") firstUser = textPart.text;
+                    }
+                    // Timestamp fallback: prefer explicit fields, else use
+                    // the file's mtime. Without this, sessions whose JSON
+                    // schema is missing session_start (older Hermes
+                    // versions / JSONL format) were invisible to the
+                    // 7-day bar chart and got bucketed as 0/week.
+                    const mtimeIso = new Date(f.mtime).toISOString();
                     out.push({
-                      id: j.session_id ?? f.name.replace(/\.json$/, ""),
-                      model: j.model ?? null,
-                      platform: j.platform ?? null,
+                      id: j?.session_id ?? f.name.replace(/\.(json|jsonl)$/, ""),
+                      model: j?.model ?? null,
+                      platform: j?.platform ?? null,
                       messageCount:
-                        typeof j.message_count === "number" ? j.message_count : msgs.length,
-                      startedAt: j.session_start ?? null,
-                      lastUpdated: j.last_updated ?? null,
+                        typeof j?.message_count === "number"
+                          ? j.message_count
+                          : msgs.length,
+                      startedAt: j?.session_start ?? mtimeIso,
+                      lastUpdated: j?.last_updated ?? mtimeIso,
                       firstUserMessage:
                         typeof firstUser === "string" ? firstUser.slice(0, 200) : null,
                     });
@@ -3130,6 +3170,52 @@ export default defineConfig({
               }
             } catch {
               /* ignore */
+            }
+            // ALSO ingest live ongoing threads from sessions.json — the
+            // master conversation index. Hermes 0.13+ reuses ONE active
+            // session per platform thread (e.g. one Telegram DM thread
+            // stays open across days of messages) and only flushes to a
+            // session_*.json file when the thread closes or restarts.
+            // Without reading the index, daily Telegram users showed
+            // "last active 5 days ago" even when actively chatting,
+            // because the index's `updated_at` was the only signal that
+            // ever ticked forward. Index entries are merged on
+            // session_id — if a session_*.json already exists for the
+            // same id, the file's record wins (it has full messages);
+            // otherwise we surface the index entry as a thin session.
+            try {
+              const indexPath = join(sessionsDir, "sessions.json");
+              if (existsSync(indexPath)) {
+                const indexRaw = readFileSync(indexPath, "utf-8");
+                const indexJson = JSON.parse(indexRaw);
+                const knownIds = new Set(out.map((s) => s.id));
+                for (const [_threadKey, info] of Object.entries(indexJson)) {
+                  if (!info || typeof info !== "object") continue;
+                  const i = info as Record<string, any>;
+                  const sid = i.session_id;
+                  if (typeof sid !== "string" || knownIds.has(sid)) continue;
+                  // Build a virtual session entry from the index.
+                  out.push({
+                    id: sid,
+                    model: i.model ?? null,
+                    platform: i.platform ?? null,
+                    messageCount:
+                      typeof i.message_count === "number" ? i.message_count : 0,
+                    startedAt: i.created_at ?? null,
+                    lastUpdated: i.updated_at ?? i.created_at ?? null,
+                    firstUserMessage: null,
+                  });
+                }
+                // Re-sort the merged list newest-first so the dashboard
+                // shows live threads at the top.
+                out.sort((a, b) => {
+                  const at = a.lastUpdated || a.startedAt || "";
+                  const bt = b.lastUpdated || b.startedAt || "";
+                  return bt.localeCompare(at);
+                });
+              }
+            } catch {
+              /* index unreadable — return file-only list */
             }
             res.setHeader("Content-Type", "application/json");
             res.setHeader("Cache-Control", "no-store");
