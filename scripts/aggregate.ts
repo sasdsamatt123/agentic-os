@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -443,6 +444,204 @@ function computeCost(model: string, u: AssistantUsage): number {
     ((u.cache_read_input_tokens || 0) * p.cache_read) / M +
     ((u.cache_creation_input_tokens || 0) * p.cache_write) / M
   );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// AUTHORITATIVE CLAUDE USAGE — fetches the real server-side state Claude
+// Code's own `/usage` command shows, via the undocumented OAuth endpoint
+// `GET https://api.anthropic.com/api/oauth/usage`. This replaces (and
+// makes accurate) the heuristic "plan-guess from message volume" path
+// in detectClaudeAuth() below — when this returns data, the dashboard
+// should prefer it over the heuristic.
+//
+// Caveats:
+//   - Endpoint is undocumented. Could change in a future Claude Code
+//     release. We pin the User-Agent to the live `claude --version` so
+//     a UA mismatch (the most common cause of 429s on this endpoint)
+//     never triggers.
+//   - Requires the OAuth token Claude Code already stores. We try
+//     `~/.claude/.credentials.json` first (Linux + some macOS installs)
+//     then macOS Keychain (`security find-generic-password`).
+//   - Returns null on ANY failure — caller falls back to the heuristic.
+// ────────────────────────────────────────────────────────────────────────────
+interface ClaudeAuthoritativeUsage {
+  five_hour?: { utilization?: number; resets_at?: string };
+  seven_day?: { utilization?: number; resets_at?: string };
+  seven_day_opus?: { utilization?: number };
+  seven_day_sonnet?: { utilization?: number };
+  extra_usage?: {
+    is_enabled?: boolean;
+    monthly_limit?: number;
+    used_credits?: number;
+    utilization?: number;
+  };
+  // The dashboard tags any record with `source: "oauth-usage-api"` so
+  // it knows this is the authoritative truth (not an estimate). Useful
+  // for showing a "live" badge in the UI vs the heuristic fallback.
+  source?: "oauth-usage-api";
+  fetched_at?: string;
+}
+
+// Reads the operator's Claude OAuth credential. Returns the full
+// payload (not just the bearer token) because the JSON blob also
+// carries authoritative plan-tier metadata:
+//   - `subscriptionType` — "max20x" / "max5x" / "pro" (ground truth,
+//     replaces our usage-volume heuristic guess)
+//   - `rateLimitTier` — same info, different name
+//   - `expiresAt` — so we can skip the network call if obviously stale
+interface ClaudeCredential {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  subscriptionType?: string;
+  rateLimitTier?: string;
+  scopes?: string[];
+}
+
+function readClaudeCredential(): ClaudeCredential | null {
+  const DEBUG = process.env.AGG_DEBUG_CRED === "1";
+  // Path 1 — credentials file (the historic location, still primary on
+  // Linux and some macOS configs).
+  const credPath = join(homedir(), ".claude", ".credentials.json");
+  try {
+    if (existsSync(credPath)) {
+      const raw = readFileSync(credPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      const inner = parsed?.claudeAiOauth ?? parsed;
+      if (typeof inner?.accessToken === "string" && inner.accessToken.startsWith("sk-ant-oat01-")) {
+        if (DEBUG) console.log("[cred] returning from file path");
+        return inner as ClaudeCredential;
+      }
+    }
+  } catch (e: any) {
+    if (DEBUG) console.log("[cred] file path error:", e.message);
+  }
+  // Path 2 — macOS Keychain. The Claude Code installer stores the
+  // credential here. CRITICAL: `security find-generic-password` requires
+  // the `-a <account>` flag in addition to `-s <service>` — without
+  // both, the lookup returns nothing visible. The account is the macOS
+  // login username.
+  if (process.platform === "darwin") {
+    try {
+      const acct = process.env.USER || execSync("whoami", { encoding: "utf-8" }).trim();
+      if (DEBUG) console.log("[cred] keychain lookup -a", acct);
+      const out = execSync(
+        `security find-generic-password -s "Claude Code-credentials" -a "${acct}" -w 2>/dev/null`,
+        { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 },
+      ).trim();
+      if (DEBUG) console.log("[cred] keychain returned", out.length, "chars");
+      // The Keychain item is a JSON blob: `{claudeAiOauth: {accessToken, ...}, mcpOAuth: ...}`.
+      // Some older installs stored just the raw token — handle both.
+      if (out.startsWith("sk-ant-oat01-")) {
+        if (DEBUG) console.log("[cred] returning raw token");
+        return { accessToken: out };
+      }
+      try {
+        const parsed = JSON.parse(out);
+        const inner = parsed?.claudeAiOauth ?? parsed;
+        if (typeof inner?.accessToken === "string" && inner.accessToken.startsWith("sk-ant-oat01-")) {
+          if (DEBUG) console.log("[cred] returning from JSON path, sub:", inner.subscriptionType);
+          return inner as ClaudeCredential;
+        } else {
+          if (DEBUG) console.log("[cred] parsed JSON but no usable token; keys:", Object.keys(inner || {}));
+        }
+      } catch (je: any) {
+        if (DEBUG) console.log("[cred] JSON parse error:", je.message);
+      }
+    } catch (e: any) {
+      if (DEBUG) console.log("[cred] keychain path error:", e.message, "status:", e.status);
+    }
+  }
+  if (DEBUG) console.log("[cred] returning null");
+  return null;
+}
+
+// Legacy wrapper kept so any older call sites still compile. Prefer
+// readClaudeCredential() directly going forward — it returns the full
+// payload including subscriptionType / rateLimitTier.
+function readClaudeOAuthToken(): string | null {
+  return readClaudeCredential()?.accessToken ?? null;
+}
+
+function detectClaudeCodeVersion(): string {
+  // Probe `claude --version` for the live version string so the UA we
+  // send matches what Anthropic's edge expects. Falls back to a recent
+  // stable version if the binary isn't on PATH (the endpoint will still
+  // accept a valid-shaped UA — what it rejects is the absence of one).
+  try {
+    const out = execSync("claude --version 2>/dev/null", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1500,
+    }).trim();
+    const m = out.match(/(\d+\.\d+\.\d+)/);
+    if (m) return m[1];
+  } catch {
+    /* not on PATH */
+  }
+  return "2.1.148"; // sensible recent default
+}
+
+async function fetchClaudeOAuthUsage(): Promise<
+  (ClaudeAuthoritativeUsage & { subscriptionType?: string; rateLimitTier?: string }) | null
+> {
+  const cred = readClaudeCredential();
+  if (!cred) return null;
+  // Skip the call if the stored token is already expired — Claude Code refreshes
+  // it in the Keychain on use, so a stale token would just 401. We still surface
+  // the ground-truth plan tier; live utilization fills in once the token is fresh.
+  if (cred.expiresAt && cred.expiresAt < Date.now()) {
+    return {
+      subscriptionType: cred.subscriptionType,
+      rateLimitTier: cred.rateLimitTier,
+      source: "oauth-usage-api",
+      fetched_at: new Date().toISOString(),
+    };
+  }
+  const version = detectClaudeCodeVersion();
+  try {
+    const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${cred.accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": `claude-code/${version}`,
+        Accept: "application/json",
+      },
+      // Short timeout — this is a fast endpoint; if it's slow we'd
+      // rather fall back to the heuristic than block the aggregator.
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) {
+      // 401 = token expired/revoked, 429 = rate-limited (likely UA
+      // mismatch), 5xx = transient. All silent — fall back.
+      // We still return the cred metadata so the dashboard at least
+      // gets the ground-truth plan tier even if live util is missing.
+      return {
+        subscriptionType: cred.subscriptionType,
+        rateLimitTier: cred.rateLimitTier,
+        source: "oauth-usage-api",
+        fetched_at: new Date().toISOString(),
+      };
+    }
+    const data = (await res.json()) as ClaudeAuthoritativeUsage;
+    return {
+      ...data,
+      subscriptionType: cred.subscriptionType,
+      rateLimitTier: cred.rateLimitTier,
+      source: "oauth-usage-api",
+      fetched_at: new Date().toISOString(),
+    };
+  } catch {
+    // Endpoint unreachable — still surface the credential metadata so
+    // the dashboard can show ground-truth plan tier offline.
+    return {
+      subscriptionType: cred.subscriptionType,
+      rateLimitTier: cred.rateLimitTier,
+      source: "oauth-usage-api",
+      fetched_at: new Date().toISOString(),
+    };
+  }
 }
 
 async function detectClaudeAuth(usage?: {
@@ -2551,12 +2750,24 @@ async function main() {
   // assistant-row count for older JSONL files where the filter yields zero.
   const used5h = parsed.userPromptsLast5h || parsed.assistantTurnsLast5h;
   const used7d = parsed.userPromptsLast7d || parsed.assistantTurnsLast7d;
+  // Authoritative Claude usage from the OAuth /usage endpoint (ported from
+  // Jack Roberts' ClaudeOS [Hermes] V2.3). When present, the dial shows
+  // Anthropic's exact utilization; otherwise the heuristic estimate below is
+  // used unchanged — zero behaviour change when OAuth isn't reachable.
+  const claudeAuthoritative = await fetchClaudeOAuthUsage();
+  const normPct = (v: number | undefined): number | undefined =>
+    v === undefined || v === null ? undefined : Math.round(v <= 1 ? v * 100 : v);
+  const auth5hPct = normPct(claudeAuthoritative?.five_hour?.utilization);
+  const auth7dPct = normPct(claudeAuthoritative?.seven_day?.utilization);
+  const authSonnetPct = normPct(claudeAuthoritative?.seven_day_sonnet?.utilization);
+
   const claudeWindow = {
     plan: claude.planGuess,
     authMode: claude.authMode,
     messagesUsed: used5h,
     messageCap: cap,
-    pctUsed: Math.min(100, Math.round((used5h / cap) * 100)),
+    pctUsed:
+      auth5hPct !== undefined ? auth5hPct : Math.min(100, Math.round((used5h / cap) * 100)),
     keychainCredentials: claude.credCount,
     // Multiple rate-limit windows matching Claude's Plan Usage UI
     windows: [
@@ -2564,25 +2775,28 @@ async function main() {
         label: "5-hour limit",
         used: used5h,
         cap,
-        pct: Math.min(100, Math.round((used5h / cap) * 100)),
+        pct: auth5hPct !== undefined ? auth5hPct : Math.min(100, Math.round((used5h / cap) * 100)),
       },
       {
         label: "Weekly · all models",
         used: used7d,
         cap: weeklyCap,
-        pct: Math.min(100, Math.round((used7d / weeklyCap) * 100)),
+        pct: auth7dPct !== undefined ? auth7dPct : Math.min(100, Math.round((used7d / weeklyCap) * 100)),
       },
       {
         label: "Sonnet only",
         used: sonnetWeekly,
         cap: sonnetCap,
-        pct: Math.min(100, Math.round((sonnetWeekly / sonnetCap) * 100)),
+        pct: authSonnetPct !== undefined ? authSonnetPct : Math.min(100, Math.round((sonnetWeekly / sonnetCap) * 100)),
       },
     ],
     familyBreakdown: {
       "5h": parsed.familyTurns5h,
       weekly: parsed.familyTurnsWeekly,
     },
+    // Full authoritative payload (no token) so the UI can show a "live" badge +
+    // exact plan tier; null when OAuth isn't reachable.
+    authoritative: claudeAuthoritative,
   };
 
   // Message caps vary by ChatGPT plan tier
