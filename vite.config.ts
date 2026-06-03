@@ -271,22 +271,30 @@ export default defineConfig({
         name: "claude-os-live-data",
         configureServer(server) {
 
-          // POST /__resume_session — reopen a Claude Code session in a new
-          // Terminal window (cd <project> && claude --resume <id>). The cwd
-          // comes from the aggregator (live-data.json) and is de-anonymised to
-          // the real home here. Loopback only; macOS opens Terminal via osascript.
+          // GET /__resume_targets — which resume targets exist on this machine.
+          server.middlewares.use("/__resume_targets", (req, res, next) => {
+            if (req.method !== "GET") return next();
+            if (!isLoopback(req)) { res.statusCode = 403; res.end("forbidden"); return; }
+            const targets = ["copy", "terminal"];
+            if (existsSync("/Applications/Cursor.app")) targets.push("cursor");
+            if (existsSync("/Applications/iTerm.app")) targets.push("iterm");
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ targets, platform: process.platform }));
+          });
+
+          // POST /__resume_session {id, cwd, target} — reopen a Claude Code
+          // session. target: "cursor" (open folder in Cursor + copy command),
+          // "terminal" (Terminal.app + run), "iterm", or "copy". The cwd comes
+          // from the aggregator and is de-anonymised to the real home here.
+          // Loopback only; no ~/.claude reads.
           server.middlewares.use("/__resume_session", (req, res, next) => {
             if (req.method !== "POST") return next();
-            if (!isLoopback(req)) {
-              res.statusCode = 403;
-              res.end("forbidden");
-              return;
-            }
+            if (!isLoopback(req)) { res.statusCode = 403; res.end("forbidden"); return; }
             let body = "";
             req.on("data", (c) => (body += c));
             req.on("end", () => {
               try {
-                const { id, cwd } = JSON.parse(body || "{}");
+                const { id, cwd, target } = JSON.parse(body || "{}");
                 if (!id || typeof id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id)) {
                   res.statusCode = 400;
                   res.setHeader("Content-Type", "application/json");
@@ -297,15 +305,37 @@ export default defineConfig({
                   typeof cwd === "string" && cwd.startsWith("/Users/")
                     ? homedir() + cwd.replace(/^\/Users\/[^/]+/, "")
                     : homedir();
+                const cmd = `claude --resume ${id}`;
                 res.setHeader("Content-Type", "application/json");
-                if (process.platform === "darwin") {
-                  const shellCmd = `cd ${JSON.stringify(realCwd)} && claude --resume ${id}`;
-                  const appleScript = `tell application "Terminal"\nactivate\ndo script ${JSON.stringify(shellCmd)}\nend tell`;
-                  spawn("osascript", ["-e", appleScript], { detached: true, stdio: "ignore" }).unref();
-                  res.end(JSON.stringify({ ok: true, cwd: realCwd }));
-                } else {
-                  res.end(JSON.stringify({ ok: false, cmd: `cd ${realCwd} && claude --resume ${id}` }));
+
+                if (process.platform !== "darwin") {
+                  res.end(JSON.stringify({ ok: false, copy: true, cmd: `cd ${realCwd} && ${cmd}`, cwd: realCwd }));
+                  return;
                 }
+                if (target === "copy") {
+                  res.end(JSON.stringify({ ok: true, copy: true, cmd, cwd: realCwd }));
+                  return;
+                }
+                if (target === "cursor") {
+                  // Open (or focus) the project folder in Cursor; the frontend
+                  // copies `claude --resume <id>` so the user pastes it into
+                  // Cursor's integrated terminal (no separate Terminal window).
+                  spawn("open", ["-a", "Cursor", realCwd], { detached: true, stdio: "ignore" }).unref();
+                  res.end(JSON.stringify({ ok: true, copy: true, cmd, opened: "cursor", cwd: realCwd }));
+                  return;
+                }
+                if (target === "iterm") {
+                  const escaped = `cd ${JSON.stringify(realCwd)} && ${cmd}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                  const itermScript = `tell application "iTerm"\nactivate\nset w to (create window with default profile)\ntell current session of w to write text "${escaped}"\nend tell`;
+                  spawn("osascript", ["-e", itermScript], { detached: true, stdio: "ignore" }).unref();
+                  res.end(JSON.stringify({ ok: true, opened: "iterm", cwd: realCwd }));
+                  return;
+                }
+                // default: Terminal.app
+                const shellCmd = `cd ${JSON.stringify(realCwd)} && ${cmd}`;
+                const appleScript = `tell application "Terminal"\nactivate\ndo script ${JSON.stringify(shellCmd)}\nend tell`;
+                spawn("osascript", ["-e", appleScript], { detached: true, stdio: "ignore" }).unref();
+                res.end(JSON.stringify({ ok: true, opened: "terminal", cwd: realCwd }));
               } catch (e) {
                 res.statusCode = 500;
                 res.setHeader("Content-Type", "application/json");
