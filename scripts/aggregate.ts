@@ -170,7 +170,7 @@ async function parseJsonls() {
   const dayBucket: Record<string, { tokens: number; messages: number; cost: number }> = {};
   const projectActivity: Record<
     string,
-    { lastMs: number; sessions: Set<string>; messages: number }
+    { lastMs: number; sessions: Set<string>; messages: number; cwd?: string }
   > = {};
 
   // Per-session accumulator — the Activity page renders one row per session.
@@ -224,7 +224,7 @@ async function parseJsonls() {
   for (const file of files) {
     const projKey = file.replace(PROJECTS_DIR + "/", "").split("/")[0];
     if (!projectActivity[projKey])
-      projectActivity[projKey] = { lastMs: 0, sessions: new Set(), messages: 0 };
+      projectActivity[projKey] = { lastMs: 0, sessions: new Set(), messages: 0, cwd: "" };
 
     let content: string;
     try {
@@ -246,6 +246,7 @@ async function parseJsonls() {
       if (ts) {
         projectActivity[projKey].lastMs = Math.max(projectActivity[projKey].lastMs, ts);
         if (row.sessionId) projectActivity[projKey].sessions.add(row.sessionId);
+        if (row.cwd && !projectActivity[projKey].cwd) projectActivity[projKey].cwd = String(row.cwd);
       }
 
       // Per-session accumulator. Touch this on every row that carries a
@@ -2912,6 +2913,7 @@ async function main() {
         lastActiveAgo: v.lastMs ? humanAgo(Date.now() - v.lastMs) : "never",
         sessions: v.sessions.size,
         messages: v.messages,
+        cwd: sanitize(v.cwd) ?? v.cwd ?? "",
       }))
       .sort((a, b) => b.lastActiveMs - a.lastActiveMs)
       .slice(0, 10),

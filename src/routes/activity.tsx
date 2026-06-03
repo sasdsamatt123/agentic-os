@@ -13,6 +13,7 @@ import {
   File,
 } from "lucide-react";
 import { StatusPill } from "@/components/status-pill";
+import { SessionResume } from "@/components/session-resume";
 import { ModelStrip, ModelLogo, MODELS, type ModelKey } from "@/components/model-logos";
 import { useLiveData } from "@/lib/use-live-data";
 
@@ -171,6 +172,8 @@ function ActivityPage() {
             : "Every Claude Code session and the artefact it produced."}
         </p>
       </header>
+      <SessionResume />
+
 
       {/* Workspace strip — horizontal scroll of all workspaces, click to filter. */}
       {workspaceSummary.length > 1 && (

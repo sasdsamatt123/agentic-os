@@ -271,6 +271,49 @@ export default defineConfig({
         name: "claude-os-live-data",
         configureServer(server) {
 
+          // POST /__resume_session — reopen a Claude Code session in a new
+          // Terminal window (cd <project> && claude --resume <id>). The cwd
+          // comes from the aggregator (live-data.json) and is de-anonymised to
+          // the real home here. Loopback only; macOS opens Terminal via osascript.
+          server.middlewares.use("/__resume_session", (req, res, next) => {
+            if (req.method !== "POST") return next();
+            if (!isLoopback(req)) {
+              res.statusCode = 403;
+              res.end("forbidden");
+              return;
+            }
+            let body = "";
+            req.on("data", (c) => (body += c));
+            req.on("end", () => {
+              try {
+                const { id, cwd } = JSON.parse(body || "{}");
+                if (!id || typeof id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(JSON.stringify({ error: "invalid session id" }));
+                  return;
+                }
+                const realCwd =
+                  typeof cwd === "string" && cwd.startsWith("/Users/")
+                    ? homedir() + cwd.replace(/^\/Users\/[^/]+/, "")
+                    : homedir();
+                res.setHeader("Content-Type", "application/json");
+                if (process.platform === "darwin") {
+                  const shellCmd = `cd ${JSON.stringify(realCwd)} && claude --resume ${id}`;
+                  const appleScript = `tell application "Terminal"\nactivate\ndo script ${JSON.stringify(shellCmd)}\nend tell`;
+                  spawn("osascript", ["-e", appleScript], { detached: true, stdio: "ignore" }).unref();
+                  res.end(JSON.stringify({ ok: true, cwd: realCwd }));
+                } else {
+                  res.end(JSON.stringify({ ok: false, cmd: `cd ${realCwd} && claude --resume ${id}` }));
+                }
+              } catch (e) {
+                res.statusCode = 500;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ error: String(e) }));
+              }
+            });
+          });
+
           // ── V2.3 Documents Gallery + Mission Control (ported from
           //    Jack Roberts' ClaudeOS [Hermes] V2.3) ──
           // Mission state lives at ~/.hermes/missions.json as a single
