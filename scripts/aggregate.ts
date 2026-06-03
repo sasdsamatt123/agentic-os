@@ -189,6 +189,8 @@ async function parseJsonls() {
     tools: Set<string>;
     models: Map<string, number>;
     firstUserPrompt: string;
+    lastUserPrompt: string;
+    lastAssistantText: string;
     slashCommand: string;
     messageCount: number;
     filesTouched: Set<string>;
@@ -270,6 +272,8 @@ async function parseJsonls() {
             tools: new Set(),
             models: new Map(),
             firstUserPrompt: "",
+            lastUserPrompt: "",
+            lastAssistantText: "",
             slashCommand: "",
             messageCount: 0,
             filesTouched: new Set(),
@@ -319,6 +323,18 @@ async function parseJsonls() {
             const cmd = text.match(/^\/([\w-]+)/);
             if (cmd) run.slashCommand = "/" + cmd[1];
           }
+        }
+        // Capture the LAST human-typed prompt — where the session was heading.
+        if (run && !isToolResult) {
+          let ltext = "";
+          if (typeof content === "string") ltext = content;
+          else if (Array.isArray(content)) {
+            for (const lb of content) {
+              if (lb && typeof lb === "object" && lb.type === "text" && typeof lb.text === "string") ltext += lb.text + " ";
+            }
+          }
+          ltext = ltext.trim();
+          if (ltext) run.lastUserPrompt = ltext.slice(0, 240);
         }
       }
 
@@ -373,6 +389,15 @@ async function parseJsonls() {
 
           // Walk content blocks for tool_use signatures.
           const acontent = row.message?.content;
+          // Latest assistant prose — where the session left off.
+          if (Array.isArray(acontent)) {
+            let atext = "";
+            for (const ab of acontent) {
+              if (ab && typeof ab === "object" && ab.type === "text" && typeof ab.text === "string") atext += ab.text + " ";
+            }
+            atext = atext.trim();
+            if (atext) run.lastAssistantText = atext.slice(0, 400);
+          }
           if (Array.isArray(acontent)) {
             for (const block of acontent) {
               if (!block || typeof block !== "object" || block.type !== "tool_use") continue;
@@ -2947,6 +2972,10 @@ async function main() {
           cacheCreate: r.cacheCreateTokens,
           cost: Math.round(r.cost * 100) / 100,
           summary: summary || "(no prompt captured)",
+          lastUserPrompt: sanitize(r.lastUserPrompt) ?? r.lastUserPrompt ?? "",
+          lastStage: sanitize(r.lastAssistantText) ?? r.lastAssistantText ?? "",
+          files: Array.from(r.filesTouched).slice(0, 8).map((f) => sanitize(f) ?? f),
+          slashCommand: r.slashCommand,
           model: primaryModel,
           messages: r.messageCount,
           filesTouched: r.filesTouched.size,
